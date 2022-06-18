@@ -1,0 +1,42 @@
+{
+  "configurations": [
+    {
+      "name": "Miniflare",
+      "type": "node",
+      "request": "launch",
+      "runtimeVersion": "18.4.0",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--open"
+      ], // same script name as in package.json
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
+      "type": "node",
+      "name": "vscode-jest-tests.v2",
+      "request": "launch",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "openOnSessionStart",
+      "runtimeExecutable": "nvs",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "run",
+        "auto",
+        "--experimental-vm-modules",
+        "--no-warnings",
+        "node_modules/jest/bin/jest.js",
+        "--runInBand",
+        "--watchAll=false",
+        "--testNamePattern",
+        "${jest.testNamePattern}",
+        "--runTestsByPath",
+        "${jest.testFile}"
+      ]
+    }
+  ]
+}

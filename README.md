@@ -4,15 +4,15 @@ This is an example [Cloudflare Workers](https://workers.cloudflare.com/) project
 
 ```shell
 # Install dependencies
-$ npm install
+$ pnpm install
 # Start local development server with live reload
-$ npm run dev
+$ pnpm run dev
 # Start remote development server using wrangler
-$ npm run dev:remote
+$ pnpm run dev:remote
 # Run tests
-$ npm test
+$ pnpm test
 # Run type checking
-$ npm run types:check
+$ pnpm run types:check
 # Deploy using wrangler
-$ npm run deploy
+$ pnpm run deploy
 ```

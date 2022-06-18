@@ -1,4 +1,4 @@
-name = "miniflare-typescript-esbuild-jest"
+name = "pwsh-gallery"
 main = "dist/index.mjs"
 
 account_id = ""
@@ -13,12 +13,18 @@ bindings = [
   { name = "COUNTER", class_name = "Counter" }
 ]
 
+kv_namespaces = [
+  { binding = "COUNTER_NAMESPACE", id = "", preview_id = "" },
+]
+
 [[migrations]]
 tag = "v1"
 new_classes = ["Counter"]
 
 [build]
-command = "node build.js"
+command = "pnpm run build"
+[build.upload]
+format = "service-worker"
 
 [miniflare]
 kv_persist = true
