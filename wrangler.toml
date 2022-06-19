@@ -1,6 +1,9 @@
 name = "pwsh-gallery"
 main = "dist/index.mjs"
 
+[build]
+command = "pnpm run build"
+
 account_id = ""
 workers_dev = true
 # route = ""
@@ -20,11 +23,6 @@ kv_namespaces = [
 [[migrations]]
 tag = "v1"
 new_classes = ["Counter"]
-
-[build]
-command = "pnpm run build"
-[build.upload]
-format = "service-worker"
 
 [miniflare]
 kv_persist = true

@@ -1,7 +1,9 @@
 # Miniflare Example Project
 
 This is an example [Cloudflare Workers](https://workers.cloudflare.com/) project that uses:
+
 * [Miniflare](https://github.com/cloudflare/miniflare) for local development
+* [ES Module](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/) Worker Syntax
 * [TypeScript](https://www.typescriptlang.org/)
 * [esbuild](https://github.com/evanw/esbuild) for bundling
 * [Jest](https://jestjs.io/) for testing, with [Miniflare's custom Jest environment](https://miniflare.dev/testing/jest).
