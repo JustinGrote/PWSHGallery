@@ -3,3 +3,5 @@ dist
 .mf
 .pnpm-debug.log
 package-lock.json
+vendor
+.denoflare

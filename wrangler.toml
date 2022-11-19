@@ -1,30 +1,6 @@
 name = "pwsh-gallery"
-main = "dist/index.mjs"
+compatibility_date = "2022-10-26"
+main = "src/worker.ts"
 
-[build]
-command = "pnpm run build"
-
-account_id = ""
-workers_dev = true
-# route = ""
-
-compatibility_date = "2022-05-28"
-compatibility_flags = []
-
-[durable_objects]
-bindings = [
-  { name = "COUNTER", class_name = "Counter" }
-]
-
-kv_namespaces = [
-  { binding = "COUNTER_NAMESPACE", id = "", preview_id = "" },
-]
-
-[[migrations]]
-tag = "v1"
-new_classes = ["Counter"]
-
-[miniflare]
-kv_persist = true
-cache_persist = true
-durable_objects_persist = true
+[env.preview]
+[env.preview2]

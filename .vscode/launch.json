@@ -1,20 +1,22 @@
 {
   "configurations": [
     {
-      "name": "Miniflare",
-      "type": "node",
+      "name": "Debug",
       "request": "launch",
-      "runtimeVersion": "18.4.0",
-      "runtimeExecutable": "npm",
       "runtimeArgs": [
-        "run",
-        "dev",
-        "--",
-        "--open"
-      ], // same script name as in package.json
+        "run-script",
+        "debug"
+      ],
+      "runtimeExecutable": "npm",
+      "presentation": {
+        "hidden": false,
+        "group": "npm",
+        "order": 1
+      },
       "skipFiles": [
         "<node_internals>/**"
-      ]
+      ],
+      "type": "node"
     },
     {
       "type": "node",

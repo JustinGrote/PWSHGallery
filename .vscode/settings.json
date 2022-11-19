@@ -1,5 +1,5 @@
 {
-  "debug.javascript.autoAttachFilter": "disabled",
+  "debug.javascript.autoAttachFilter": "onlyWithFlag",
   "jest.jestCommandLine": "nvs run auto --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js",
   "jest.showTerminalOnLaunch": false,
   "explorer.fileNesting.patterns": {
@@ -9,5 +9,5 @@
     "*.tsx": "${capture}.ts",
     "tsconfig.json": "tsconfig.*.json",
     "package.json": "package-lock.json, yarn.lock, pnpm-lock.yaml"
-  }
+  },
 }
