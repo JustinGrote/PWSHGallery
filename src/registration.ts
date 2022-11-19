@@ -70,6 +70,7 @@ export async function registrationPageHandler(
     (item) => item['@id'].split('/').at(-1) === page
   )
   if (!selectedPage) {
+
     return new Response(
       'The registration page you requested does not exist. You probably either did not parse the @id from the index properly, or you guessed for this URI (shame on you)',
       { status: StatusCodes.NOT_FOUND }
@@ -77,7 +78,11 @@ export async function registrationPageHandler(
   }
   const responseBody = toJSON(selectedPage)
   const response = new Response(responseBody)
-  context.waitUntil(saveCachedResponse(request, response, 86400))
+  if (response.ok) {
+    // Dont cache errors
+    context.waitUntil(saveCachedResponse(request, response, 86400))
+  }
+  return response
 }
 
 /**
