@@ -3,7 +3,9 @@
     "target": "esnext",
     "module": "esnext",
     "lib": ["esnext"],
-    "types": ["@cloudflare/workers-types"],
+    "types": [
+      "@cloudflare/workers-types/2022-08-04"
+    ],
     "moduleResolution": "node",
     "strict": true,
     "noEmit": true,

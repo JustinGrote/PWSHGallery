@@ -3,8 +3,8 @@
 import { Router } from 'itty-router'
 import { mainIndexHandler } from './mainIndex'
 import {
-  registrationIndexHandler,
-  registrationPageHandler,
+	registrationIndexHandler,
+	registrationPageHandler,
 } from './registration'
 import { assertModuleFastUserAgent } from './middleware'
 
@@ -24,7 +24,7 @@ router.get('/:id/page/:page', registrationPageHandler)
 router.all('*', () => new Response('Not Found.', { status: 404 }))
 
 export default {
-  fetch: router.handle,
+	fetch: router.handle,
 }
 
 // TODO: Wire up either a scheduled handler or a post-fetch task to check for updated registrations and invalidate the cache if so
