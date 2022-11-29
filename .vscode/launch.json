@@ -7,7 +7,7 @@
         "run-script",
         "debug"
       ],
-      "console": "internalConsole",
+      "console": "integratedTerminal",
       "runtimeExecutable": "npm",
       "presentation": {
         "hidden": false,
