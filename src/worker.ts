@@ -6,7 +6,6 @@ import {
 	registrationIndexHandler,
 	registrationPageHandler,
 } from './registration'
-import { assertModuleFastUserAgent } from './middleware'
 
 const router = Router()
 

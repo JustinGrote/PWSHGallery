@@ -15,10 +15,16 @@ TODO: Publish a service that returns the dependency graph of a module in a singl
 to build it and not exceed the 50ms CPU limit or subrequest limit. Generally probably not worth the effort as multiplexing
 package queries is pretty effective
 
+## PowerShell Gallery Optimization
+
+Based on testing, fetching a single package info vs fetching all package infos is negligible, so we go ahead and fetch
+the first 100 results regardless even if we only present less to the user.
+
 ## ModuleFast flow
 
-For origin queries, a "cold" hit will fetch all versions and dependencies of a package. Nuget v3 allows you to present
-"pages" of data, so we inline the "latest" version which is what 90% of queries will look for as a top page, and then
+For origin queries, a "cold" hit will fetch all versions and dependencies of a package. Based on testing,
+
+Nuget v3 allows you to present "pages" of data, so we inline the "latest" version which is what 90% of queries will look for as a top page, and then
 present a "stub" page for all other versions. This enables the client to determine what packages meet the dependency criteria
 without having to perform queries for each version.
 
