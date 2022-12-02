@@ -12,7 +12,7 @@ specifiers:
   prettier-plugin-organize-imports: ^3.2.1
   semver: ^7.3.8
   typescript: ^4.9.3
-  wrangler: ^2.4.4
+  wrangler: ^2.5.0
 
 dependencies:
   fast-xml-parser: 4.0.12
@@ -28,7 +28,7 @@ devDependencies:
   prettier: 2.8.0
   prettier-plugin-organize-imports: 3.2.1_brpckf4sz23pco3jyty2eys3iq
   typescript: 4.9.3
-  wrangler: 2.4.4
+  wrangler: 2.5.0
 
 packages:
 
@@ -296,11 +296,11 @@ packages:
   /@types/better-sqlite3/7.6.2:
     resolution: {integrity: sha512-RgmaapusqTq6IMAr4McMyAsC6RshYTCjXCnzwVV59WctUxC8bNPyUfT9t5F81lKcU41lLurhjqjoMHfauzfqGg==}
     dependencies:
-      '@types/node': 18.11.9
+      '@types/node': 18.11.10
     dev: true
 
-  /@types/node/18.11.9:
-    resolution: {integrity: sha512-CRpX21/kGdzjOpFsZSkcrXMGIBWMGNIHXXBVFSH+ggkftxg+XYP20TESbh+zFvFj3EQOl5byk0HTRn1IL6hbqg==}
+  /@types/node/18.11.10:
+    resolution: {integrity: sha512-juG3RWMBOqcOuXC643OAdSA525V44cVgGV6dUDuiFtss+8Fk5x1hI93Rsld43VeJVIeqlP9I7Fn9/qaVqoEAuQ==}
     dev: true
 
   /@types/semver/7.3.13:
@@ -1542,8 +1542,8 @@ packages:
     engines: {node: '>=0.10.0'}
     dev: true
 
-  /wrangler/2.4.4:
-    resolution: {integrity: sha512-Of3O/7RzIcGWGmt7dd5JevvP419De55smr4Hi07REKt9oXYhMNeaFy4wX35fHlv5e0pVCyGB3Fna8mI4Ib2pew==}
+  /wrangler/2.5.0:
+    resolution: {integrity: sha512-7Y7Vh4yi1Vpa/o2o48VgWMv6G/3u8SPR3CJEWgntL4zPZog7iIxl0R2QjthWpsPHI7+PK6cFtnpSaSrcdEk+vw==}
     engines: {node: '>=16.13.0'}
     hasBin: true
     dependencies:
