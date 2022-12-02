@@ -125,7 +125,6 @@ async function getRegistrationIndex(
 		context.waitUntil(fetchRemainingPackages(nextLink, id))
 	}
 
-
 	const index = new Index(
 		endpoint,
 		dependencyResponse.packageInfos,
