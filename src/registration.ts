@@ -28,7 +28,7 @@ export async function registrationIndexHandler(
 ) {
 	const cachedResponse = await getCachedResponse(request)
 	if (cachedResponse) {
-		console.log(`CACHE HIT: ${request.url}`)
+		console.log(`Index CACHE HIT: ${request.url}`)
 		return cachedResponse
 	}
 
@@ -62,7 +62,7 @@ export async function registrationPageHandler(
 
 	// TODO: Type this, maybe with a generic?
 	const { id, page } = request.params
-	// TODO: Deduplicate this with getRegistrationIndex
+
 	const dependencyResponse = await getRegistrationIndex(
 		v2OriginEndpoint,
 		id,
@@ -113,13 +113,18 @@ async function getRegistrationIndex(
 
 	const nextLink = dependencyResponse.nextLink
 	if (nextLink) {
-		const fetchRemainingPackages = async () => {
+		const fetchRemainingPackages = async (nextLink: URL, id: string) => {
 			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
 			console.log(`Found ${remainingPackages.length} remaining packages`)
-			// TODO: Get this into cache for when the page is fetched
+
+			const olderPackagesLeaves = remainingPackages.map(p => new Leaf(endpoint, p))
+			const olderPackagesPage = new Page(endpoint,olderPackagesLeaves,'older')
+			console.log(`${id}: Storing older package page ${olderPackagesPage['@id']}`)
+			cache.put(olderPackagesPage['@id'], new Response(JSON.stringify(olderPackagesPage)))
 		}
-		context.waitUntil(fetchRemainingPackages())
+		context.waitUntil(fetchRemainingPackages(nextLink, id))
 	}
+
 
 	const index = new Index(
 		endpoint,
@@ -445,11 +450,10 @@ class Index {
 			}
 			// This doesnt actually exist yet, but will be fast-cached by a background task after the index is returned
 			const olderPage: Page = {
-				'@id': `${endpoint}/${lowestVersion}`,
+				'@id': `${endpoint}/older`,
 				lower: new SemVer('0.0.0'),
 				upper: lowestVersion,
 				count: 0,
-				items: [],
 			}
 			this.items.push(olderPage)
 		}

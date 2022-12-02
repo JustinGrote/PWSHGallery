@@ -9,15 +9,9 @@ import {
 
 const router = Router()
 
-// Enable this in prod
-// router.get('*', assertModuleFastUserAgent)
 router.get('/index.json', mainIndexHandler)
-// This is basically not used
-// router.get('/registration/index.json', registrationIndexHandler)
 router.get('/:id/index.json', registrationIndexHandler)
-router.get('/:id/page/:page', registrationPageHandler)
-
-// router.get('/registration', getRegistrationIndexHandler)
+router.get('/:id/:page', registrationPageHandler)
 
 // 404 for all other requests
 router.all('*', () => new Response('Not Found.', { status: 404 }))
