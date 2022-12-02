@@ -7,7 +7,6 @@ import {
 	parse as parseSemVer,
 	SemVer,
 } from 'semver'
-import { finishAfterResponse } from './cfWorkerUtil'
 import { IttyRequest } from './ittyUtil'
 import { throwIfNull } from './nullUtils'
 
@@ -112,9 +111,6 @@ async function getRegistrationIndex(
 		return dependencyResponse
 	}
 
-	// TODO: Index should inline the latest version and provide version ranges for remaining packages
-	const index = new Index(endpoint, dependencyResponse.packageInfos)
-
 	const nextLink = dependencyResponse.nextLink
 	if (nextLink) {
 		const fetchRemainingPackages = async () => {
@@ -124,6 +120,13 @@ async function getRegistrationIndex(
 		}
 		context.waitUntil(fetchRemainingPackages())
 	}
+
+	const index = new Index(
+		endpoint,
+		dependencyResponse.packageInfos,
+		true,
+		nextLink !== undefined
+	)
 
 	// Converts the object to a JSON representation
 	const responseBody = toJSON(index)
@@ -356,7 +359,7 @@ class Index {
 		v2Infos: NugetV2PackageInfo[],
 		inlineAll?: boolean,
 		// Create a fake "page" referencing all versions not found in the nuget v2 response. We use this as a way to quickly response without having to look up all the other versions if this package has more than the default page size of the server.
-		olderVersions?: true
+		olderVersions = true
 	) {
 		this.items = []
 		// We are going to splice this and dont want to mess with the original array
@@ -441,7 +444,14 @@ class Index {
 				)
 			}
 			// This doesnt actually exist yet, but will be fast-cached by a background task after the index is returned
-			this.items.push(new Page(endpoint, [], 'older', false))
+			const olderPage: Page = {
+				'@id': `${endpoint}/${lowestVersion}`,
+				lower: new SemVer('0.0.0'),
+				upper: lowestVersion,
+				count: 0,
+				items: [],
+			}
+			this.items.push(olderPage)
 		}
 
 		this.count = this.items.length
@@ -504,6 +514,8 @@ class Page {
 		this.parent = endpoint + 'index.json'
 	}
 }
+
+
 
 class Leaf {
 	'@id': string
