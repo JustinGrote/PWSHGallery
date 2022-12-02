@@ -37,7 +37,9 @@ export async function registrationIndexHandler(
 		.trim()
 		.substring(0, request.url.lastIndexOf('/') + 1)
 	const { id } = request.params
-	const response = await getRegistrationIndex(registrationEndpoint, id)
+	const response = await getRegistrationIndex(registrationEndpoint, id, context)
+
+	// Cache our response after we send the data to the client
 	context.waitUntil(saveCachedResponse(request, response, 600))
 	return response
 }
@@ -61,10 +63,18 @@ export async function registrationPageHandler(
 	// TODO: Type this, maybe with a generic?
 	const { id, page } = request.params
 	// TODO: Deduplicate this with getRegistrationIndex
-	const packageInfos = await fetchDependencyInfo(v2OriginEndpoint, id)
-	if (packageInfos instanceof Response) {
-		return packageInfos
+	const dependencyResponse = await getRegistrationIndex(
+		v2OriginEndpoint,
+		id,
+		context
+	)
+
+	// A responseBody rather than what we want is probably an error and we will pass it thru.
+	if (dependencyResponse instanceof Response) {
+		return dependencyResponse
 	}
+
+	const packageInfos = dependencyResponse
 	const index = new Index(registrationBase, packageInfos, true)
 	const selectedPage = index.items.find(
 		(item) => item['@id'].split('/').at(-1) === page
@@ -77,8 +87,8 @@ export async function registrationPageHandler(
 	}
 	const responseBody = toJSON(selectedPage)
 	const response = new Response(responseBody)
+	// Dont cache errors
 	if (response.ok) {
-		// Dont cache errors
 		context.waitUntil(saveCachedResponse(request, response, 86400))
 	}
 	return response
@@ -88,17 +98,35 @@ export async function registrationPageHandler(
  * Handles queries for registrations by proxying calls to Powershell Gallery
  */
 // TODO: Redo this to abstract out the response part
-async function getRegistrationIndex(endpoint: string, id: string) {
-	console.log(`Registration Query for ${id}`)
+async function getRegistrationIndex(
+	endpoint: string,
+	id: string,
+	context: ExecutionContext
+) {
+	console.log(`Registration Index Query for ${id}`)
 
-	const packageInfos = await fetchDependencyInfo(v2OriginEndpoint, id)
+	const dependencyResponse = await fetchOriginPackageInfo(v2OriginEndpoint, id)
 	// A responseBody rather than what we want is probably an error and we will pass it thru.
-	if (packageInfos instanceof Response) {
-		return packageInfos
+	if (dependencyResponse instanceof Response) {
+		return dependencyResponse
 	}
 
-	// TODO: Index should inline the latest version and provide version ranges for remaining packages
-	const index = new Index(endpoint, packageInfos)
+	const nextLink = dependencyResponse.nextLink
+	if (nextLink) {
+		const fetchRemainingPackages = async () => {
+			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
+			console.log(`Found ${remainingPackages.length} remaining packages`)
+			// TODO: Get this into cache for when the page is fetched
+		}
+		context.waitUntil(fetchRemainingPackages())
+	}
+
+	const index = new Index(
+		endpoint,
+		dependencyResponse.packageInfos,
+		true,
+		nextLink !== undefined
+	)
 
 	// Converts the object to a JSON representation
 	const responseBody = toJSON(index)
@@ -122,17 +150,34 @@ function toJSON(object: any) {
 	return JSON.stringify(object, null, 2)
 }
 
-/** Fetch Nuget v2 dependency data from the source PSGallery server. Other functions handle the processing of this */
-async function fetchDependencyInfo(
+interface OriginPackageInfoResponse {
+	packageInfos: NugetV2PackageInfo[]
+	nextLink: URL | undefined
+}
+
+/** Fetch Nuget v2 package data from the source PSGallery server. Other functions handle the processing of this data.
+ * if there are more results than fit in the first request, a nextLink will also be returned.
+ */
+async function fetchOriginPackageInfo(
 	v2Endpoint: string,
 	id: string,
-	cacheLifetimeSeconds: number = 86400
-) {
+	cacheLifetimeSeconds: number = 3600
+): Promise<OriginPackageInfoResponse | Response> {
 	// TODO: Proper Typing and building this request
-	const requestUri = `${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
+	console.log(`Getting Packages for ${id} from ${v2Endpoint}`)
+	const requestUri = new URL(
+		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
+	)
+	return await fetchOriginPackageInfoByUrl(requestUri, cacheLifetimeSeconds)
+}
+
+async function fetchOriginPackageInfoByUrl(
+	url: URL,
+	cacheLifetimeSeconds: number = 3600
+) {
 	// We make an eager fetch for all versions and their dependencies
-	console.log(`${id} ORIGIN REQUEST: ${requestUri}`)
-	const originResponse = await fetch(requestUri, {
+	console.log(`ORIGIN REQUEST: ${url}`)
+	const originResponse = await fetch(url.toString(), {
 		headers: {
 			Accept: 'application/atom+xml',
 			'Accept-Encoding': 'gzip',
@@ -145,6 +190,10 @@ async function fetchDependencyInfo(
 			cacheTtl: cacheLifetimeSeconds,
 		},
 	})
+
+	if (!originResponse.ok) {
+		return originResponse
+	}
 
 	const responseText = await originResponse.text()
 
@@ -159,26 +208,83 @@ async function fetchDependencyInfo(
 		: [responseXML.feed.entry]
 
 	// TODO: If a nextlink exists, we meed to bring this along with us and expose a separate cache page for those results
-	// Queries to the nextlink would be rare, for very old packages.
+	// Queries to the nextlink would be expected to be rare, for very old packages.
 	const nextLink = getNextLink(responseXML)
 
 	if (!packageInfos) {
-		return new Response(`No packages found named ${id}`, {
+		return new Response(`No packages found`, {
 			status: StatusCodes.NOT_FOUND,
 		})
 	}
 
-	console.log(`${id}: ${packageInfos.length} packages found`)
+	console.log(`${url}: ${packageInfos.length} packages found`)
+	return {
+		packageInfos: packageInfos,
+		nextLink: nextLink,
+	}
+}
+
+/** Get remaining package info from nextLink using an aggressive readahead process. This is typically used in the waitUntil so we can return newest results quickly and cache all results for follow-up from the user */
+// TODO: Add a upper threshold in the event the number of fetches is greater than 50 (this would require a package to have more than 5000 versions...)
+async function fetchOriginRemainingPackageInfo(nextLink: URL, throttle = 5) {
+	// parse the nextLink to find out what our jump size is
+	const skipString = nextLink.searchParams.get('$skip')
+	if (!skipString) {
+		throw new Error('No $skip parameter found in nextLink, this is a bug')
+	}
+	const skipSize = parseInt(skipString)
+
+	let skip = skipSize.valueOf()
+	let noMoreNextLinkFound = false
+
+	// Start by creating immediately fetch tasks matching the throttle, and continue to create tasks until we no longer see a nextLink meaning we are complete
+	const fetchTasks: Promise<OriginPackageInfoResponse | Response>[] = []
+	const packageInfos: NugetV2PackageInfo[] = []
+	while (!noMoreNextLinkFound) {
+		const currentNextLink = new URL(nextLink.toString())
+		currentNextLink.searchParams.set('$skip', skip.toString())
+		console.log(
+			`Fetching additional package info chunk ${skip} from ${currentNextLink}`
+		)
+		fetchTasks.push(fetchOriginPackageInfoByUrl(currentNextLink))
+		skip += skipSize
+		if (fetchTasks.length < throttle) {
+			continue
+		}
+		if (fetchTasks.length > throttle) {
+			throw new Error(
+				'outstanding tasks higher than the throttle. This is a bug'
+			)
+		}
+
+		// Wait for the first task to complete, then check if we have a nextLink, if we do, we will create a new task
+		const currentTaskResult = await fetchTasks.shift()
+		if (currentTaskResult === undefined) {
+			throw 'this should never happen'
+		}
+		if (currentTaskResult instanceof Response) {
+			// FIXME: We should be handling this somewhat gracefully
+			throw new Error('NOT IMPLEMENTED: Unexpected response from origin')
+		}
+
+		packageInfos.push.apply(packageInfos, currentTaskResult.packageInfos)
+		if (!currentTaskResult.nextLink) {
+			// We've reached the end of results, bail out. Otherwise we start again and queue a new readahead task
+			// The remaining tasks will just resolve off into the ether and be ignored
+			noMoreNextLinkFound = true
+		}
+	}
+
 	return packageInfos
 }
 
 /** Returns the NextLink of a function, if present */
-function getNextLink(xml: any): string | undefined {
+function getNextLink(xml: any): URL | undefined {
 	const links: any[] = Array.isArray(xml.feed.link)
 		? xml.feed.link
 		: [xml.feed.link]
 	const link = links.find((link: any) => link['@_rel'] === 'next')
-	return link ? link.href : undefined
+	return link ? new URL(link['@_href']) : undefined
 }
 
 function parseNugetV2DependencyString(
@@ -245,12 +351,15 @@ interface NugetV2PackageInfo {
  * @see https://docs.microsoft.com/en-us/nuget/api/registration-base-url-resource#registration-index
  */
 class Index {
+	/** How many pages exist in the index. This should typically not be more than 4 for our bridge */
 	count: number
 	items: Page[]
 	constructor(
 		endpoint: string,
 		v2Infos: NugetV2PackageInfo[],
-		inlineAll?: boolean
+		inlineAll?: boolean,
+		// Create a fake "page" referencing all versions not found in the nuget v2 response. We use this as a way to quickly response without having to look up all the other versions if this package has more than the default page size of the server.
+		olderVersions = true
 	) {
 		this.items = []
 		// We are going to splice this and dont want to mess with the original array
@@ -320,8 +429,29 @@ class Index {
 				(v2Info) => new Leaf(endpoint, v2Info)
 			)
 			this.items.push(
-				new Page(endpoint, otherPageLeaves, 'olderVersions', inlineAll ?? false)
+				new Page(endpoint, otherPageLeaves, 'other', inlineAll ?? false)
 			)
+		}
+
+		if (olderVersions) {
+			const lowestVersion = minSatisfying(
+				this.items.map((p) => p.lower),
+				'*'
+			)
+			if (!lowestVersion) {
+				throw new Error(
+					'No lowest version found. This is a bug and should not happen'
+				)
+			}
+			// This doesnt actually exist yet, but will be fast-cached by a background task after the index is returned
+			const olderPage: Page = {
+				'@id': `${endpoint}/${lowestVersion}`,
+				lower: new SemVer('0.0.0'),
+				upper: lowestVersion,
+				count: 0,
+				items: [],
+			}
+			this.items.push(olderPage)
 		}
 
 		this.count = this.items.length
@@ -341,6 +471,7 @@ async function saveCachedResponse(
 	response: Response,
 	ttl?: number
 ) {
+	console.log(`Caching: ${request.url}`)
 	if (ttl) {
 		response.headers.append('Cache-Control', `max-age=${ttl}`)
 	}
@@ -383,6 +514,8 @@ class Page {
 		this.parent = endpoint + 'index.json'
 	}
 }
+
+
 
 class Leaf {
 	'@id': string
