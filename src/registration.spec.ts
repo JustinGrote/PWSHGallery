@@ -44,11 +44,12 @@ describe('router', () => {
 	})
 
 	describe('RegistrationIndex', async () => {
-		let url: URL, response: Response, result: Index
+		let url: URL, response: Response, result: Index, cache: Cache
 		beforeAll(async () => {
 			url = new URL('ImportExcel/index.json', base)
 			response = await get(url)
 			result = await response.json()
+			cache = await caches.open('pwshgallery')
 		})
 		it('responds successfully', () => {
 			expect(response.status).toBe(200)
@@ -57,7 +58,7 @@ describe('router', () => {
 			expect(result['@id']).toBe(url.toString())
 		})
 		it('has a latest page inlined', () => {
-			expect(result.items[0]['@id']).toBe(new URL('ImportExcel#page/latest', base).toString())
+			expect(result.items[0]['@id']).toBe(new URL('ImportExcel/index.json#page/latest', base).toString())
 		})
 		it('has a other page as a link', () => {
 			expect(result.items[1]['@id']).toBe(new URL('ImportExcel/page/other.json', base).toString())
@@ -65,8 +66,16 @@ describe('router', () => {
 		it('has a older page as a link', () => {
 			expect(result.items[2]['@id']).toBe(new URL('ImportExcel/page/older.json', base).toString())
 		})
+		it('index page is cached', async () => {
+			const key = new URL('ImportExcel/index.json', base)
+			const cacheResult = await cache.match(key)
+			const response = (await cacheResult.json()) as Index
+			expect(response.items[0]['@id']).toMatch(/latest/)
+			expect(response.items[0].items.length).toBe(1)
+		})
 
-		describe('RegistrationPage', async () => {
+		// This is hard to test because we need to figure out how to await on the the waitUtil for the index to complete so the page is cached.
+		describe.todo('RegistrationPage', async () => {
 			let url: URL, response: Response, result: Index
 			beforeAll(async () => {
 				url = new URL('ImportExcel/page/other.json', base)
@@ -143,7 +152,7 @@ describe('UnstableDevWorker E2E', () => {
 			expect(result['@id']).toBe(target.toString())
 		})
 		it('has a latest page inlined', () => {
-			expect(result.items[0]['@id']).toBe(new URL('ImportExcel#page/latest', base).toString())
+			expect(result.items[0]['@id']).toBe(new URL('ImportExcel/index.json#page/latest', base).toString())
 		})
 		it('has a other page as a link', () => {
 			expect(result.items[1]['@id']).toBe(new URL('ImportExcel/page/other.json', base).toString())

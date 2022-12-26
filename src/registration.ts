@@ -6,6 +6,8 @@ import { maxSatisfying, minSatisfying, parse as parseSemVer, SemVer } from 'semv
 import { throwIfNull } from './nullUtils.js'
 import urlJoinHelper from 'url-join'
 
+const testUrl = 'http://test'
+
 /** Helper function to combine URLs, because the builtin URL does not combine relative paths well with a base */
 
 type URLOrString = URL | string
@@ -45,28 +47,32 @@ export async function registrationIndexHandler(honoContext: Context) {
 
 export async function registrationPageHandler(honoContext: Context) {
 	const { req: request, executionCtx: context } = honoContext
+	return new Response(
+		'Not Implemented - This should return a cached page, need to add logic if it doesnt like if it is deeplinked',
+		{ status: StatusCodes.NOT_IMPLEMENTED }
+	)
 
 	// HACK: TrieRouter doesnt support period delimiters: https://github.com/honojs/hono/issues/737
 	const { id, 'page.json': pageNameRaw } = request.param()
 
 	// This is used to build the '@id' URLs within the index
-	let baseUrl = new URL(request.url).origin
+	// let baseUrl = new URL(request.url).origin
 
-	const page = await getRegistrationPage(baseUrl, id, context, pageNameRaw)
+	// const page = await getRegistrationPage(baseUrl, id, context, pageNameRaw)
 
-	// If we get a response instead of an index, its probably bad, and we need to return it to the user
-	if (page instanceof Response) {
-		return page
-	}
+	// // If we get a response instead of an index, its probably bad, and we need to return it to the user
+	// if (page instanceof Response) {
+	// 	return page
+	// }
 
-	const responseBody = toJSON(page)
-	const response = new Response(responseBody, {
-		headers: {
-			'content-type': 'application/json;charset=UTF-8',
-			'cache-control': 'max-age: 86400',
-		},
-	})
-	return response
+	// const responseBody = toJSON(page)
+	// const response = new Response(responseBody, {
+	// 	headers: {
+	// 		'content-type': 'application/json;charset=UTF-8',
+	// 		'cache-control': 'max-age: 86400',
+	// 	},
+	// })
+	// return response
 }
 
 export async function registrationPageLeafHandler(request: Request, _env: any, context: ExecutionContext) {
@@ -97,7 +103,7 @@ async function getRegistrationIndex(registrationBase: string, id: string, contex
 	}
 
 	const nextLink = dependencyResponse.nextLink
-	const index = new Index(registrationBase, id, dependencyResponse.packageInfos, false, nextLink !== undefined)
+	const index = new Index(registrationBase, id, dependencyResponse.packageInfos, nextLink !== undefined)
 
 	// We want to process remaining packages in the background so as not to block the response.
 	if (nextLink) {
@@ -106,22 +112,28 @@ async function getRegistrationIndex(registrationBase: string, id: string, contex
 			registrationBase = new URL(registrationBase)
 			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
 			console.debug(`Found ${remainingPackages.length} remaining packages`)
-			const olderPackagesPage = new Page(
-				urlJoin(registrationBase, id),
-				remainingPackages,
-				true,
-				index['@id'],
-				'older.json'
+			const olderPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'older')
+
+			// Replace the page anchor with a direct link
+			olderPackagesPage.parent = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
+			olderPackagesPage['@id'] = new URL(
+				olderPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json')
 			)
-			console.debug(`${id}: Storing older package page ${olderPackagesPage['@id']}`)
+
+			const pageUrl = olderPackagesPage['@id']
+			console.debug(`${id}: Caching page ${pageUrl}`)
 			// hono cache middleware should pick this up when it is requested
 			// TODO: Middleware might need to wait for this to show up in cache if we know index was called
-			cache.put(olderPackagesPage['@id'], new Response(JSON.stringify(olderPackagesPage)))
+			const olderPackagesPageResponse = new Response(toJSON(olderPackagesPage))
+			olderPackagesPageResponse.headers.append('Cache-Control', 's-maxage=3600')
+			await cache.put(pageUrl, olderPackagesPageResponse)
 		}
+		// await fetchRemainingPackages(nextLink, id, index, registrationBase)
 		context.waitUntil(fetchRemainingPackages(nextLink, id, index, registrationBase))
 	}
 
-	return index
+	// We only want the stub so the client gets minimal/most common data and can query for more
+	return await index.compress()
 }
 
 /**
@@ -221,7 +233,7 @@ async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: numbe
 	// Queries to the nextlink would be expected to be rare, for very old packages.
 	const nextLink = getNextLink(responseXML)
 
-	if (!packageInfos) {
+	if (packageInfos[0] === undefined) {
 		return new Response(`No packages found`, {
 			status: StatusCodes.NOT_FOUND,
 		})
@@ -359,7 +371,6 @@ export class Index {
 		/** The name of the registration (usually the package name) */
 		name: string,
 		v2Infos: NugetV2PackageInfo[],
-		inlineAll?: boolean,
 		// Create a fake "page" referencing all versions not found in the nuget v2 response. We use this as a way to quickly response without having to look up all the other versions if this package has more than the default page size of the server.
 		olderVersions = true
 	) {
@@ -376,7 +387,7 @@ export class Index {
 		const latest = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsLatestVersion']?.__value)
 		if (latest) {
 			// TODO: Handle case where the latest version is hidden. Right now it just goes into otherversions
-			this.items.push(new Page(indexBase, [latest], true, this['@id'], 'latest'))
+			this.items.push(new Page(indexBase, [latest], this['@id'], 'latest'))
 			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latest), 1)
 			if (removedItem[0] != latest) {
 				throw new Error(
@@ -390,7 +401,7 @@ export class Index {
 		// kind of package to be recognized as a latest and not a prerelease
 		const latestPrerelease = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsAbsoluteLatestVersion']?.__value)
 		if (latestPrerelease) {
-			this.items.push(new Page(indexBase, [latestPrerelease], true, this['@id'], 'prerelease'))
+			this.items.push(new Page(indexBase, [latestPrerelease], this['@id'], 'prerelease'))
 			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latestPrerelease), 1)
 			if (removedItem[0] != latestPrerelease) {
 				throw new Error(
@@ -408,7 +419,7 @@ export class Index {
 		// TODO: Tabulate this in a server-definable setting so the individual pages are static and infinitely cacheable
 		// Construct a page consisting of all the other entries
 		if (myv2Infos.length != 0) {
-			this.items.push(new Page(indexBase, myv2Infos, inlineAll ?? false, this['@id'], 'other'))
+			this.items.push(new Page(indexBase, myv2Infos, this['@id'], 'other'))
 		}
 
 		if (olderVersions) {
@@ -431,6 +442,32 @@ export class Index {
 
 		this.count = this.items.length
 	}
+
+	// Takes pages that have more than 1 item, cache them, and replace them with a stub
+	async compress() {
+		var cache = await caches.open('pwshgallery')
+		for (const page of this.items) {
+			if (page.items && page.items.length > 1) {
+				// Replace the page anchor with a direct link
+				page.parent = new URL(page['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
+				page['@id'] = new URL(page['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json'))
+				// Publish the full page with the direct link ID to the cache so future direct requests will pick it up
+				console.debug('Caching page %s', page['@id'].toString())
+				await cache.put(
+					page['@id'].toString(),
+					new Response(toJSON(page), {
+						headers: {
+							'Cache-Control': 'max-age=86400',
+						},
+					})
+				)
+				// Empty the items and parent to indicate it is a stub
+				page.parent = undefined
+				page.items = undefined
+			}
+		}
+		return this
+	}
 }
 
 /**
@@ -448,15 +485,13 @@ export class Page {
 		/** Represents the base path that the page and related Leaf IDs will be constructed from. Usually the base path of the index without the index.json e.g. https://myserver/packages/MyPackage/ */
 		pageBase: URL,
 		packages: NugetV2PackageInfo[],
-		inline: boolean = false,
 		parentIndexId: URL,
 		pageName?: string
 	) {
-		this.parent = parentIndexId
 		const leaves = packages.map(p => new Leaf(pageBase, p))
 		const versions = leaves.map(leaf => leaf.catalogEntry.version)
 		this.count = leaves.length
-		this.items = inline ? leaves : undefined
+		this.items = leaves
 		this.lower =
 			minSatisfying<SemVer>(versions, '*', {
 				includePrerelease: true,
@@ -471,7 +506,7 @@ export class Page {
 
 		// We want inlined links to be an anchor to the index rather than a separate link so clients dont try to follow it.
 		// this is better for caching.
-		this['@id'] = inline ? urlJoin(pageBase, '#' + pageBaseName) : urlJoin(pageBase, pageBaseName + '.json')
+		this['@id'] = urlJoin(parentIndexId, '#' + pageBaseName)
 	}
 }
 
