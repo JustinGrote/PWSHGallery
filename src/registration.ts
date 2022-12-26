@@ -1,18 +1,21 @@
 // Entrypoint for the Registration handler
 import { XMLParser } from 'fast-xml-parser'
+import { Context } from 'hono'
 import { StatusCodes } from 'http-status-codes'
-import {
-	maxSatisfying,
-	minSatisfying,
-	parse as parseSemVer,
-	SemVer,
-} from 'semver'
-import { IttyRequest } from './ittyUtil'
-import { throwIfNull } from './nullUtils'
+import { maxSatisfying, minSatisfying, parse as parseSemVer, SemVer } from 'semver'
+import { throwIfNull } from './nullUtils.js'
+import urlJoinHelper from 'url-join'
+
+/** Helper function to combine URLs, because the builtin URL does not combine relative paths well with a base */
+
+type URLOrString = URL | string
+function urlJoin(...urlParts: URLOrString[]) {
+	const parts = urlParts.map(u => u.toString())
+	return new URL(urlJoinHelper(...parts))
+}
 
 // TODO: Make this configurable
-const v2OriginEndpoint = 'https://www.powershellgallery.com/api/v2'
-let cache: Cache = caches.default
+const v2OriginEndpoint = 'http://www.powershellgallery.com/api/v2'
 
 //** Used to translate the Nuget v2 XML to JSON */
 // TODO: Parse the info directly to a converted CatalogEntry rather than the intermediate storage step
@@ -21,89 +24,71 @@ const xml = new XMLParser({
 	textNodeName: '__value',
 })
 
-export async function registrationIndexHandler(
-	request: IttyRequest,
-	_env: any,
-	context: ExecutionContext
-) {
-	const cachedResponse = await getCachedResponse(request)
-	if (cachedResponse) {
-		console.log(`Index CACHE HIT: ${request.url}`)
-		return cachedResponse
+export async function registrationIndexHandler(honoContext: Context) {
+	const { req: request, executionCtx: context } = honoContext
+
+	// This is used to build the '@id' URLs within the index
+	let baseUrl = new URL(request.url).origin
+
+	const { id } = request.param()
+	const index = await getRegistrationIndex(baseUrl, id, context)
+
+	// If we get a response instead of an index, its probably bad, and we need to return it to the user
+	if (index instanceof Response) {
+		return index
 	}
 
-	/** We want to get our "base" URI for the registration Endpoint for purposes of building '@id' URIs */
-	let registrationEndpoint = request.url
-		.trim()
-		.substring(0, request.url.lastIndexOf('/') + 1)
-	const { id } = request.params
-	const response = await getRegistrationIndex(registrationEndpoint, id, context)
-
-	// Cache our response after we send the data to the client
-	context.waitUntil(saveCachedResponse(request, response, 600))
+	const response = new Response(toJSON(index))
+	response.headers.append('Cache-Control', 'max-age=86400')
 	return response
 }
 
-export async function registrationPageHandler(
-	request: IttyRequest,
-	_env: any,
-	context: ExecutionContext
-) {
-	const cachedResponse = await getCachedResponse(request)
-	if (cachedResponse) {
-		console.log(`CACHE HIT: ${request.url}`)
-		return cachedResponse
+export async function registrationPageHandler(honoContext: Context) {
+	const { req: request, executionCtx: context } = honoContext
+
+	// HACK: TrieRouter doesnt support period delimiters: https://github.com/honojs/hono/issues/737
+	const { id, 'page.json': pageNameRaw } = request.param()
+
+	// This is used to build the '@id' URLs within the index
+	let baseUrl = new URL(request.url).origin
+
+	const page = await getRegistrationPage(baseUrl, id, context, pageNameRaw)
+
+	// If we get a response instead of an index, its probably bad, and we need to return it to the user
+	if (page instanceof Response) {
+		return page
 	}
 
+	const responseBody = toJSON(page)
+	const response = new Response(responseBody, {
+		headers: {
+			'content-type': 'application/json;charset=UTF-8',
+			'cache-control': 'max-age: 86400',
+		},
+	})
+	return response
+}
+
+export async function registrationPageLeafHandler(request: Request, _env: any, context: ExecutionContext) {
 	/** We want to get our "base" URI for the registration Endpoint for purposes of building '@id' URIs */
-	let registrationBase = request.url
-		.trim()
-		.substring(0, request.url.lastIndexOf('page'))
-
+	const origin = new URL(request.url).origin
 	// TODO: Type this, maybe with a generic?
-	const { id, page } = request.params
+	const { id, lower, upper } = request.param()
 
-	const dependencyResponse = await getRegistrationIndex(
-		v2OriginEndpoint,
-		id,
-		context
-	)
+	const dependencyResponse = await getRegistrationIndex(v2OriginEndpoint, id, context)
 
 	// A responseBody rather than what we want is probably an error and we will pass it thru.
 	if (dependencyResponse instanceof Response) {
 		return dependencyResponse
 	}
-
-	const packageInfos = dependencyResponse
-	const index = new Index(registrationBase, packageInfos, true)
-	const selectedPage = index.items.find(
-		(item) => item['@id'].split('/').at(-1) === page
-	)
-	if (!selectedPage) {
-		return new Response(
-			'The registration page you requested does not exist. You probably either did not parse the @id from the index properly, or you guessed for this URI (shame on you)',
-			{ status: StatusCodes.NOT_FOUND }
-		)
-	}
-	const responseBody = toJSON(selectedPage)
-	const response = new Response(responseBody)
-	// Dont cache errors
-	if (response.ok) {
-		context.waitUntil(saveCachedResponse(request, response, 86400))
-	}
-	return response
 }
 
 /**
  * Handles queries for registrations by proxying calls to Powershell Gallery
  */
 // TODO: Redo this to abstract out the response part
-async function getRegistrationIndex(
-	endpoint: string,
-	id: string,
-	context: ExecutionContext
-) {
-	console.log(`Registration Index Query for ${id}`)
+async function getRegistrationIndex(registrationBase: string, id: string, context: ExecutionContext) {
+	console.debug(`Registration Index Query for ${id}`)
 
 	const dependencyResponse = await fetchOriginPackageInfo(v2OriginEndpoint, id)
 	// A responseBody rather than what we want is probably an error and we will pass it thru.
@@ -112,29 +97,53 @@ async function getRegistrationIndex(
 	}
 
 	const nextLink = dependencyResponse.nextLink
-	if (nextLink) {
-		const fetchRemainingPackages = async (nextLink: URL, id: string) => {
-			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
-			console.log(`Found ${remainingPackages.length} remaining packages`)
+	const index = new Index(registrationBase, id, dependencyResponse.packageInfos, false, nextLink !== undefined)
 
-			const olderPackagesLeaves = remainingPackages.map(p => new Leaf(endpoint, p))
-			const olderPackagesPage = new Page(endpoint,olderPackagesLeaves,'older')
-			console.log(`${id}: Storing older package page ${olderPackagesPage['@id']}`)
+	// We want to process remaining packages in the background so as not to block the response.
+	if (nextLink) {
+		const cache = await caches.open('pwshgallery')
+		const fetchRemainingPackages = async (nextLink: URL, id: string, index: Index, registrationBase: string | URL) => {
+			registrationBase = new URL(registrationBase)
+			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
+			console.debug(`Found ${remainingPackages.length} remaining packages`)
+			const olderPackagesPage = new Page(
+				urlJoin(registrationBase, id),
+				remainingPackages,
+				true,
+				index['@id'],
+				'older.json'
+			)
+			console.debug(`${id}: Storing older package page ${olderPackagesPage['@id']}`)
+			// hono cache middleware should pick this up when it is requested
+			// TODO: Middleware might need to wait for this to show up in cache if we know index was called
 			cache.put(olderPackagesPage['@id'], new Response(JSON.stringify(olderPackagesPage)))
 		}
-		context.waitUntil(fetchRemainingPackages(nextLink, id))
+		context.waitUntil(fetchRemainingPackages(nextLink, id, index, registrationBase))
 	}
 
-	const index = new Index(
-		endpoint,
-		dependencyResponse.packageInfos,
-		true,
-		nextLink !== undefined
-	)
+	return index
+}
 
-	// Converts the object to a JSON representation
-	const responseBody = toJSON(index)
-	return new Response(responseBody)
+/**
+ * Retrieves the pages from the index fetched from PowerShell gallery
+ */
+export async function getRegistrationPage(baseUri: string, id: string, context: ExecutionContext, page: string) {
+	const index = await getRegistrationIndex(baseUri, id, context)
+
+	// A responseBody rather than what we want is probably an error and we will pass it thru.
+	if (index instanceof Response) {
+		return index
+	}
+
+	// TODO: Write a function that, if the page name is "older", wait until the cache is populated. This will avoid a race condition error.
+	const selectedPage = index.items.find(item => item['@id'].toString().split('/').at(-1) === page)
+	if (!selectedPage) {
+		return new Response(
+			'The registration page you requested does not exist. You probably either did not parse the @id from the index properly, or you guessed for this URI (shame on you). If you requested older, the main index may not have finished background caching yet and you should retry',
+			{ status: StatusCodes.NOT_FOUND }
+		)
+	}
+	return selectedPage
 }
 
 /** Generic serializer that takes into account issues with certain items */
@@ -168,19 +177,16 @@ async function fetchOriginPackageInfo(
 	cacheLifetimeSeconds: number = 3600
 ): Promise<OriginPackageInfoResponse | Response> {
 	// TODO: Proper Typing and building this request
-	console.log(`Getting Packages for ${id} from ${v2Endpoint}`)
+	console.debug(`Getting Packages for ${id} from ${v2Endpoint}`)
 	const requestUri = new URL(
 		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
 	)
 	return await fetchOriginPackageInfoByUrl(requestUri, cacheLifetimeSeconds)
 }
 
-async function fetchOriginPackageInfoByUrl(
-	url: URL,
-	cacheLifetimeSeconds: number = 3600
-) {
+async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: number = 3600) {
 	// We make an eager fetch for all versions and their dependencies
-	console.log(`ORIGIN REQUEST: ${url}`)
+	console.debug(`ORIGIN REQUEST: ${url}`)
 	const originResponse = await fetch(url.toString(), {
 		headers: {
 			Accept: 'application/atom+xml',
@@ -221,7 +227,7 @@ async function fetchOriginPackageInfoByUrl(
 		})
 	}
 
-	console.log(`${url}: ${packageInfos.length} packages found`)
+	console.debug(`${url}: ${packageInfos.length} packages found`)
 	return {
 		packageInfos: packageInfos,
 		nextLink: nextLink,
@@ -247,18 +253,14 @@ async function fetchOriginRemainingPackageInfo(nextLink: URL, throttle = 5) {
 	while (!noMoreNextLinkFound) {
 		const currentNextLink = new URL(nextLink.toString())
 		currentNextLink.searchParams.set('$skip', skip.toString())
-		console.log(
-			`Fetching additional package info chunk ${skip} from ${currentNextLink}`
-		)
+		console.debug(`Fetching additional package info chunk ${skip} from ${currentNextLink}`)
 		fetchTasks.push(fetchOriginPackageInfoByUrl(currentNextLink))
 		skip += skipSize
 		if (fetchTasks.length < throttle) {
 			continue
 		}
 		if (fetchTasks.length > throttle) {
-			throw new Error(
-				'outstanding tasks higher than the throttle. This is a bug'
-			)
+			throw new Error('outstanding tasks higher than the throttle. This is a bug')
 		}
 
 		// Wait for the first task to complete, then check if we have a nextLink, if we do, we will create a new task
@@ -284,36 +286,27 @@ async function fetchOriginRemainingPackageInfo(nextLink: URL, throttle = 5) {
 
 /** Returns the NextLink of a function, if present */
 function getNextLink(xml: any): URL | undefined {
-	const links: any[] = Array.isArray(xml.feed.link)
-		? xml.feed.link
-		: [xml.feed.link]
+	const links: any[] = Array.isArray(xml.feed.link) ? xml.feed.link : [xml.feed.link]
 	const link = links.find((link: any) => link['@_rel'] === 'next')
 	return link ? new URL(link['@_href']) : undefined
 }
 
-function parseNugetV2DependencyString(
-	registrationEndpoint: string,
-	nugetV2depInfo: string
-) {
+function parseNugetV2DependencyString(pageBase: URL, nugetV2depInfo: string) {
 	const deps = nugetV2depInfo.split('|')
-	return deps.map<Dependency>((dep) => {
+	return deps.map<Dependency>(dep => {
 		const [id, v2Range] = dep.split(':')
 
 		// For PS and Nuget v2, a specified version actually means a minimum version, we need to fix that here
 		const range = v2Range.match(/^\d.+/) ? `[${v2Range}, )` : v2Range
 
-		const endpoint =
-			registrationEndpoint.substring(
-				0,
-				registrationEndpoint.lastIndexOf('/', registrationEndpoint.length - 2) +
-					1
-			) +
-			id +
-			'/index.json'
+		// We can find the registration base by removing the package from the page base
+		const registrationBase = new URL(pageBase.toString().substring(0, pageBase.toString().lastIndexOf('/')))
+
+		const dependencyIndexId = urlJoin(registrationBase, id, 'index.json')
 		return {
 			id: id,
 			range: range,
-			registration: endpoint,
+			registration: dependencyIndexId,
 		}
 	})
 }
@@ -354,31 +347,36 @@ interface NugetV2PackageInfo {
  * Nuget v3 Registration Index
  * @see https://docs.microsoft.com/en-us/nuget/api/registration-base-url-resource#registration-index
  */
-class Index {
+export class Index {
+	'@id': URL
 	/** How many pages exist in the index. This should typically not be more than 4 for our bridge */
 	count: number
 	items: Page[]
+
 	constructor(
-		endpoint: string,
+		/** The base path for the registration endpoint, as defined in the main index service */
+		registrationBaseUrl: URL | string,
+		/** The name of the registration (usually the package name) */
+		name: string,
 		v2Infos: NugetV2PackageInfo[],
 		inlineAll?: boolean,
 		// Create a fake "page" referencing all versions not found in the nuget v2 response. We use this as a way to quickly response without having to look up all the other versions if this package has more than the default page size of the server.
 		olderVersions = true
 	) {
+		this['@id'] = new URL(urlJoin(registrationBaseUrl, name, 'index.json'))
+		// Converts string to a URL if present to make the type consistent
+		registrationBaseUrl = new URL(registrationBaseUrl)
+		const indexBase = urlJoin(registrationBaseUrl, name)
+		// Append index.json to indexBase preserving the full path of indexBase
+
 		this.items = []
 		// We are going to splice this and dont want to mess with the original array
 		const myv2Infos = Array.from(v2Infos)
 
-		const latest = myv2Infos.find(
-			(v2Info) => v2Info['m:properties']['d:IsLatestVersion']?.__value
-		)
+		const latest = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsLatestVersion']?.__value)
 		if (latest) {
 			// TODO: Handle case where the latest version is hidden. Right now it just goes into otherversions
-			const latestPageLeaf: Leaf = new Leaf(endpoint, latest)
-			console.log(`Latest: ${latestPageLeaf.catalogEntry.version}`)
-			this.items.push(
-				new Page(endpoint, [latestPageLeaf], 'latest', inlineAll ?? true)
-			)
+			this.items.push(new Page(indexBase, [latest], true, this['@id'], 'latest'))
 			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latest), 1)
 			if (removedItem[0] != latest) {
 				throw new Error(
@@ -390,29 +388,10 @@ class Index {
 		//TODO: Deduplicate latest and prerelease into a separate function
 		// NOTE: This must come after latest, because the same package may be both latest and absoluteLatest and we want that
 		// kind of package to be recognized as a latest and not a prerelease
-		const latestPrerelease = myv2Infos.find(
-			(v2Info) => v2Info['m:properties']['d:IsAbsoluteLatestVersion']?.__value
-		)
+		const latestPrerelease = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsAbsoluteLatestVersion']?.__value)
 		if (latestPrerelease) {
-			const latestPrereleasePageLeaf: Leaf = new Leaf(
-				endpoint,
-				latestPrerelease
-			)
-			console.log(
-				`Prerelease: ${latestPrereleasePageLeaf.catalogEntry.version}`
-			)
-			this.items.push(
-				new Page(
-					endpoint,
-					[latestPrereleasePageLeaf],
-					'prerelease',
-					inlineAll ?? true
-				)
-			)
-			const removedItem = myv2Infos.splice(
-				myv2Infos.indexOf(latestPrerelease),
-				1
-			)
+			this.items.push(new Page(indexBase, [latestPrerelease], true, this['@id'], 'prerelease'))
+			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latestPrerelease), 1)
 			if (removedItem[0] != latestPrerelease) {
 				throw new Error(
 					`Removed prerelease item ${removedItem} does not match latest prerelease item ${latestPrerelease}. This is a bug.`
@@ -429,81 +408,55 @@ class Index {
 		// TODO: Tabulate this in a server-definable setting so the individual pages are static and infinitely cacheable
 		// Construct a page consisting of all the other entries
 		if (myv2Infos.length != 0) {
-			const otherPageLeaves = myv2Infos.map(
-				(v2Info) => new Leaf(endpoint, v2Info)
-			)
-			this.items.push(
-				new Page(endpoint, otherPageLeaves, 'other', inlineAll ?? false)
-			)
+			this.items.push(new Page(indexBase, myv2Infos, inlineAll ?? false, this['@id'], 'other'))
 		}
 
 		if (olderVersions) {
 			const lowestVersion = minSatisfying(
-				this.items.map((p) => p.lower),
+				this.items.map(p => p.lower),
 				'*'
 			)
 			if (!lowestVersion) {
-				throw new Error(
-					'No lowest version found. This is a bug and should not happen'
-				)
+				throw new Error('No lowest version found. This is a bug and should not happen')
 			}
 			// This doesnt actually exist yet, but will be fast-cached by a background task after the index is returned
-			const olderPage: Page = {
-				'@id': `${endpoint}/older`,
+			const olderPageStub: Page = {
+				'@id': urlJoin(indexBase, 'page/older.json'),
 				lower: new SemVer('0.0.0'),
 				upper: lowestVersion,
 				count: 0,
 			}
-			this.items.push(olderPage)
+			this.items.push(olderPageStub)
 		}
 
 		this.count = this.items.length
 	}
 }
 
-async function getCachedResponse(request: IttyRequest) {
-	const response = await cache.match(request.url)
-	if (response) {
-		return response
-	}
-	return undefined
-}
-
-async function saveCachedResponse(
-	request: IttyRequest,
-	response: Response,
-	ttl?: number
-) {
-	console.log(`Caching: ${request.url}`)
-	if (ttl) {
-		response.headers.append('Cache-Control', `max-age=${ttl}`)
-	}
-	await cache.put(request.url, response.clone())
-}
-
 /**
  * Nuget v3 Registration Page
  * https://learn.microsoft.com/en-us/nuget/api/registration-base-url-resource#registration-pages-and-leaves
  */
-class Page {
-	'@id': string
+export class Page {
+	'@id': URL
 	lower: SemVer
 	upper: SemVer
 	count: number
-	parent?: string
+	parent?: URL
 	items?: Leaf[]
 	constructor(
-		endpoint: string,
-		leaf: Leaf[],
-		pageName?: string,
-		inline: boolean = false
+		/** Represents the base path that the page and related Leaf IDs will be constructed from. Usually the base path of the index without the index.json e.g. https://myserver/packages/MyPackage/ */
+		pageBase: URL,
+		packages: NugetV2PackageInfo[],
+		inline: boolean = false,
+		parentIndexId: URL,
+		pageName?: string
 	) {
-		if (leaf.length === 0) {
-			throw new Error(`Cannot create a page with no leaves`)
-		}
-		const versions = leaf.map((leaf) => leaf.catalogEntry.version)
-		this.count = leaf.length
-		this.items = inline ? leaf : undefined
+		this.parent = parentIndexId
+		const leaves = packages.map(p => new Leaf(pageBase, p))
+		const versions = leaves.map(leaf => leaf.catalogEntry.version)
+		this.count = leaves.length
+		this.items = inline ? leaves : undefined
 		this.lower =
 			minSatisfying<SemVer>(versions, '*', {
 				includePrerelease: true,
@@ -512,21 +465,23 @@ class Page {
 			maxSatisfying<SemVer>(versions, '*', {
 				includePrerelease: true,
 			}) ?? throwIfNull('no upper bound found. This should never happen.')
-		this['@id'] =
-			endpoint + 'page/' + (pageName ?? this.lower + '_' + this.upper)
-		this.parent = endpoint + 'index.json'
+
+		// If no named page was specified, make an automatic one from the upper and lower bounds
+		const pageBaseName = 'page/' + pageName ?? this.lower + '/' + this.upper
+
+		// We want inlined links to be an anchor to the index rather than a separate link so clients dont try to follow it.
+		// this is better for caching.
+		this['@id'] = inline ? urlJoin(pageBase, '#' + pageBaseName) : urlJoin(pageBase, pageBaseName + '.json')
 	}
 }
 
-
-
-class Leaf {
-	'@id': string
+export class Leaf {
+	'@id': URL
 	catalogEntry: CatalogEntry
 	/** The URL to download the .nupkg file */
 	packageContent: string
 	// Creates a leaf and all related child items from a NugetV2 Package
-	constructor(registrationEndpoint: string, packageInfo: NugetV2PackageInfo) {
+	constructor(pageBase: URL, packageInfo: NugetV2PackageInfo) {
 		const nugetV2Version = packageInfo['m:properties']['d:NormalizedVersion']
 		const version =
 			parseNugetV2Version(packageInfo['m:properties']['d:NormalizedVersion']) ??
@@ -534,27 +489,23 @@ class Leaf {
 				`Version ${packageInfo['m:properties']['d:NormalizedVersion']} to a semantic version. This is a bug.`
 			)
 
-		const basePackageVersionUri = registrationEndpoint + nugetV2Version
+		this['@id'] = urlJoin(pageBase, nugetV2Version + '.json')
 		this.packageContent = packageInfo.content['@_src']
 
 		this.catalogEntry = {
-			'@id': basePackageVersionUri + '.json',
+			// We use an anchor because its an inlined entry
+			'@id': new URL(this['@id'] + '#catalogEntry'),
 			id: packageInfo.title.__value,
 			version: version,
 		}
 
-		// BUG: This is not routed in the worker but is also generally not referenced.
-		// Need to fix this up to be cleaner
-		this['@id'] = basePackageVersionUri + '/pageLeaf'
 		const dependencies = packageInfo['m:properties']['d:Dependencies']
-		this.catalogEntry.dependencyGroups = dependencies
-			? [new DependencyGroup(registrationEndpoint, dependencies)]
-			: []
+		this.catalogEntry.dependencyGroups = dependencies ? [new DependencyGroup(pageBase, dependencies)] : []
 	}
 }
 
 interface CatalogEntry {
-	'@id': string
+	'@id': URL
 	id: string
 	version: SemVer
 	dependencyGroups?: DependencyGroup[]
@@ -569,11 +520,8 @@ interface CatalogEntry {
 }
 
 class DependencyGroup {
-	constructor(registrationEndpoint: string, nugetV2depInfo: string) {
-		this.dependencies = parseNugetV2DependencyString(
-			registrationEndpoint,
-			nugetV2depInfo
-		)
+	constructor(PageBase: URL, nugetV2depInfo: string) {
+		this.dependencies = parseNugetV2DependencyString(PageBase, nugetV2depInfo)
 	}
 	targetFramework?: string
 	dependencies?: Dependency[]
@@ -582,7 +530,7 @@ class DependencyGroup {
 interface Dependency {
 	id: string
 	range?: string
-	registration?: string
+	registration?: URL
 }
 
 function newBadRequest(message: string) {

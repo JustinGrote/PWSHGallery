@@ -4,9 +4,8 @@ import { StatusCodes } from 'http-status-codes'
 export function assertModuleFastUserAgent(request: Request) {
 	const userAgent = request.headers.get('User-Agent')
 	if (!userAgent?.startsWith('ModuleFast')) {
-		return new Response(
-			'Only the ModuleFast user agent is currently supported. Sorry!',
-			{ status: StatusCodes.NOT_IMPLEMENTED }
-		)
+		return new Response('Only the ModuleFast user agent is currently supported. Sorry!', {
+			status: StatusCodes.NOT_IMPLEMENTED,
+		})
 	}
 }

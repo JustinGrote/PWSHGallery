@@ -1,7 +1,5 @@
 {
   "debug.javascript.autoAttachFilter": "smart",
-  "jest.jestCommandLine": "nvs run auto --experimental-vm-modules --no-warnings node_modules/jest/bin/jest.js",
-  "jest.showTerminalOnLaunch": false,
   "explorer.fileNesting.patterns": {
     "*.ts": "${capture}.js, ${capture}.spec.ts",
     "*.js": "${capture}.js.map, ${capture}.min.js, ${capture}.d.ts",
@@ -10,4 +8,5 @@
     "tsconfig.json": "tsconfig.*.json",
     "package.json": "package-lock.json, yarn.lock, pnpm-lock.yaml"
   },
+  "vitest.commandLine": " pnpm test --",
 }

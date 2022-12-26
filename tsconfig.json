@@ -1,20 +1,37 @@
 {
   "compilerOptions": {
-    "target": "esnext",
+		"target": "es2022",
     "module": "esnext",
-    "lib": ["esnext"],
+		"moduleResolution": "Node",
+		"moduleDetection": "auto",
+		"lib": [
+			"es2022"
+		],
     "types": [
-      "@cloudflare/workers-types/2022-08-04"
+			"@cloudflare/workers-types/2022-08-04",
     ],
-    "moduleResolution": "node",
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "baseUrl": "./",
+		"noEmit": true,
+		// "strict": true,
+		// "alwaysStrict": true,
+		"sourceMap": true,
+		"baseUrl": "./src",
     "paths": {
-      "@/*": ["src/*"]
-    },
-    "skipLibCheck": true
-  },
-  "include": ["src/**/*", "bindings.d.ts"]
+			"@/*": [
+				"./*"
+			],
+			"🏠*": [
+				"./*"
+			],
+		}
+	},
+	"include": [
+		"src"
+,
+"test/registration.e2e.spec.ts"
+],
+	"exclude": [
+		"node_modules",
+		"dist",
+		"src/test"
+	]
 }

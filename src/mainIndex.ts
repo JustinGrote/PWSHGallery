@@ -1,16 +1,20 @@
 /*** Returns the top level index for the nuget v3 API. */
 
-export function mainIndexHandler(request: Request) {
+import { Context } from 'hono'
+
+export function mainIndexHandler(context: Context) {
+	const request = context.req
 	const requestHost = new URL(request.url).origin
 	return new Response(getIndex(requestHost), {
 		headers: {
 			'content-type': 'application/json;charset=UTF-8',
+			'cache-control': 'max-age: 86400'
 		},
 	})
 }
 
 function getIndex(host: string) {
-	const baseUri = host
+	const baseUrl = host
 	const index = {
 		version: '3.0.0',
 		resources: [
@@ -33,10 +37,9 @@ function getIndex(host: string) {
 			//     'NuGet package registration info that is stored in GZIP format and includes SemVer 2.0.0 packages',
 			// },
 			{
-				'@id': baseUri,
+				'@id': baseUrl,
 				'@type': 'RegistrationsBaseUrl/3.6.0',
-				comment:
-					'NuGet package registration info that is stored in GZIP format and includes SemVer 2.0.0 packages',
+				comment: 'NuGet package registration info that is stored in GZIP format and includes SemVer 2.0.0 packages',
 			},
 
 			// Should not be needed

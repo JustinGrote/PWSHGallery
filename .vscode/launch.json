@@ -8,10 +8,10 @@
         "debug"
       ],
       "console": "integratedTerminal",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "pnpm",
       "presentation": {
         "hidden": false,
-        "group": "npm",
+        "group": "pnpm",
         "order": 1
       },
       "skipFiles": [
@@ -21,25 +21,22 @@
     },
     {
       "type": "node",
-      "name": "vscode-jest-tests.v2",
+      "autoAttachChildProcesses": true,
+			"name": "Test",
+      "skipFiles": [
+        "!node_modules/hono/**", // We want to debug these internals
+        "**/node_modules/**", // exclude scripts in node_modules folders
+        "<node_internals>/**"
+      ],
       "request": "launch",
-      "console": "integratedTerminal",
+      "console": "internalConsole",
       "internalConsoleOptions": "openOnSessionStart",
-      "runtimeExecutable": "nvs",
+      "runtimeExecutable": "pnpm",
       "cwd": "${workspaceFolder}",
       "args": [
-        "run",
-        "auto",
-        "--experimental-vm-modules",
-        "--no-warnings",
-        "node_modules/jest/bin/jest.js",
-        "--runInBand",
-        "--watchAll=false",
-        "--testNamePattern",
-        "${jest.testNamePattern}",
-        "--runTestsByPath",
-        "${jest.testFile}"
-      ]
+        "test",
+				"--"
+			]
     }
   ]
 }
