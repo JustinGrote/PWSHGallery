@@ -1,6 +1,5 @@
-name = "pwsh-gallery"
-compatibility_date = "2022-08-04"
-main = "src/worker.ts"
+#:schema ./.wrangler/wrangler.schema.json
+compatibility_date = "2023-10-02"
 
-[env.preview]
-[env.preview2]
+name = "pwsh-gallery"
+main = "src/worker.ts"

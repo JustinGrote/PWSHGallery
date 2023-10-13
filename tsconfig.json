@@ -1,37 +1,17 @@
 {
-  "compilerOptions": {
-		"target": "es2022",
-    "module": "esnext",
-		"moduleResolution": "Node",
-		"moduleDetection": "auto",
-		"lib": [
-			"es2022"
-		],
-    "types": [
-			"@cloudflare/workers-types/2022-08-04",
-    ],
+	"compilerOptions": {
+		"target": "es2021",
+		"lib": ["es2021"],
+		"module": "es2022",
+		"moduleResolution": "node",
+		"types": ["@cloudflare/workers-types"],
 		"noEmit": true,
-		// "strict": true,
-		// "alwaysStrict": true,
 		"sourceMap": true,
-		"baseUrl": "./src",
-    "paths": {
-			"@/*": [
-				"./*"
-			],
-			"🏠*": [
-				"./*"
-			],
-		}
-	},
-	"include": [
-		"src"
-,
-"test/registration.e2e.spec.ts"
-],
-	"exclude": [
-		"node_modules",
-		"dist",
-		"src/test"
-	]
+		"inlineSources": false,
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"allowSyntheticDefaultImports": true,
+		"forceConsistentCasingInFileNames": true,
+		"strict": true
+	}
 }

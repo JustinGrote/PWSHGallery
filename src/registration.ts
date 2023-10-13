@@ -191,7 +191,7 @@ async function fetchOriginPackageInfo(
 	// TODO: Proper Typing and building this request
 	console.debug(`Getting Packages for ${id} from ${v2Endpoint}`)
 	const requestUri = new URL(
-		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
+		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,Version,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
 	)
 	return await fetchOriginPackageInfoByUrl(requestUri, cacheLifetimeSeconds)
 }
@@ -343,6 +343,7 @@ interface NugetV2PackageInfo {
 		__value: string
 	}
 	'm:properties': {
+		'd:Version': string
 		'd:NormalizedVersion': string
 		'd:GUID'?: string
 		'd:Dependencies'?: string
