@@ -513,7 +513,7 @@ export class Page {
 		const upperSemVer: SemVer =
 			maxSatisfying(versions, '*', { includePrerelease: true }) ??
 			throwIfNull('no lower bound found. This should never happen.')
-		this.upper = versionMap.get(lowerSemVer) ?? throwIfNull('upper bound version not found in the map. This is a bug.')
+		this.upper = versionMap.get(upperSemVer) ?? throwIfNull('upper bound version not found in the map. This is a bug.')
 
 		// If no named page was specified, make an automatic one from the upper and lower bounds
 		const pageBaseName = 'page/' + pageName ?? this.lower + '/' + this.upper
