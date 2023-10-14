@@ -1,4 +1,4 @@
-import { unstable_dev } from 'wrangler'
+import { unstable_dev as wranglerDev } from 'wrangler'
 import type { UnstableDevWorker } from 'wrangler'
 import { describe, expect, it, test, beforeAll, afterAll } from 'vitest'
 import type { Index, Page, Leaf } from './registration.js'
@@ -97,7 +97,7 @@ describe('UnstableDevWorker E2E', () => {
 	let base: string
 
 	beforeAll(async () => {
-		worker = await unstable_dev(
+		worker = await wranglerDev(
 			'src/worker.ts',
 			{ inspect: true, inspectorPort: 39929 },
 			{ disableExperimentalWarning: true }

@@ -5,8 +5,7 @@
 			"type": "node",
 			"request": "attach",
 			"preLaunchTask": "Wrangler Dev",
-			"skipFiles": ["<node_internals>/**", "**/node_modules/**"],
-			"resolveSourceMapLocations": null //This is key, the source maps to resolve end up located in your temp directory, and vscode by default only looks in your workspace directory. You can also set this to null or an empty array, but source maps in node_modules might get evaluated which may slow you down significantly unless you specifically want to debug those.
+			"skipFiles": ["<node_internals>/**", "**/node_modules/**"]
 		}
 	]
 }
