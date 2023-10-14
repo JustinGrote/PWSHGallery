@@ -4,8 +4,8 @@
 			"name": "Wrangler Dev",
 			"type": "node",
 			"request": "attach",
-			"preLaunchTask": "Wrangler Dev",
-			"skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+			"preLaunchTask": "Wrangler Dev"
+			// "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
 		}
 	]
 }

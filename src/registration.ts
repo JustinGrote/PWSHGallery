@@ -330,6 +330,14 @@ function parseNugetV2Version(version: string) {
 		const [major, minor, build, revision] = version.split('.')
 		return parseSemVer(`${major}.${minor}.${build}+${revision}`)
 	}
+
+	const majorOnly = /^\d+$/
+	const majorMinorOnly = /^\d+\.\d+$/
+	if (majorOnly.test(version)) {
+		version = `${version}.0.0`
+	} else if (majorMinorOnly.test(version)) {
+		version = `${version}.0`
+	}
 	return parseSemVer(version)
 }
 
@@ -497,7 +505,8 @@ export class Page {
 		const versions: SemVer[] = leaves.map(leaf => {
 			const nugetV2Version = leaf.catalogEntry.version
 			const semVer: SemVer =
-				parseNugetV2Version(nugetV2Version) ?? throwIfNull('version could not be parsed. This should never happen.')
+				parseNugetV2Version(nugetV2Version) ??
+				throwIfNull(`version ${nugetV2Version} could not be parsed. This should never happen.`)
 			versionMap.set(semVer, nugetV2Version)
 			return semVer
 		})
