@@ -434,7 +434,7 @@ export class Index {
 			// This doesnt actually exist yet, but will be fast-cached by a background task after the index is returned
 			const olderPageStub: Page = {
 				'@id': urlJoin(indexBase, 'page/older.json'),
-				lower: new SemVer('0.0.0'),
+				lower: '0.0.0',
 				upper: lowestVersion,
 				count: 0,
 			}
@@ -477,8 +477,8 @@ export class Index {
  */
 export class Page {
 	'@id': URL
-	lower: SemVer
-	upper: SemVer
+	lower: string
+	upper: string
 	count: number
 	parent?: URL
 	items?: Leaf[]
@@ -490,17 +490,30 @@ export class Page {
 		pageName?: string
 	) {
 		const leaves = packages.map(p => new Leaf(pageBase, p))
-		const versions = leaves.map(leaf => leaf.catalogEntry.version)
+
+		const versionMap = new Map<SemVer, string>()
+
+		// Maps the semver we use for comparison to the "actual" version from the Nuget v2 API
+		const versions: SemVer[] = leaves.map(leaf => {
+			const nugetV2Version = leaf.catalogEntry.version
+			const semVer: SemVer =
+				parseNugetV2Version(nugetV2Version) ?? throwIfNull('version could not be parsed. This should never happen.')
+			versionMap.set(semVer, nugetV2Version)
+			return semVer
+		})
+
 		this.count = leaves.length
 		this.items = leaves
-		this.lower =
-			minSatisfying<SemVer>(versions, '*', {
-				includePrerelease: true,
-			}) ?? throwIfNull('no lower bound found. This should never happen.')
-		this.upper =
-			maxSatisfying<SemVer>(versions, '*', {
-				includePrerelease: true,
-			}) ?? throwIfNull('no upper bound found. This should never happen.')
+		const lowerSemVer: SemVer =
+			minSatisfying(versions, '*', { includePrerelease: true }) ??
+			throwIfNull('no lower bound found. This should never happen.')
+
+		this.lower = versionMap.get(lowerSemVer) ?? throwIfNull('lower bound version not found in the map. This is a bug.')
+
+		const upperSemVer: SemVer =
+			maxSatisfying(versions, '*', { includePrerelease: true }) ??
+			throwIfNull('no lower bound found. This should never happen.')
+		this.upper = versionMap.get(lowerSemVer) ?? throwIfNull('upper bound version not found in the map. This is a bug.')
 
 		// If no named page was specified, make an automatic one from the upper and lower bounds
 		const pageBaseName = 'page/' + pageName ?? this.lower + '/' + this.upper
@@ -518,12 +531,8 @@ export class Leaf {
 	packageContent: string
 	// Creates a leaf and all related child items from a NugetV2 Package
 	constructor(pageBase: URL, packageInfo: NugetV2PackageInfo) {
-		const nugetV2Version = packageInfo['m:properties']['d:NormalizedVersion']
-		const version =
-			parseNugetV2Version(packageInfo['m:properties']['d:NormalizedVersion']) ??
-			throwIfNull<SemVer>(
-				`Version ${packageInfo['m:properties']['d:NormalizedVersion']} to a semantic version. This is a bug.`
-			)
+		// NOTE: While we use a normalized version for purposes of sorting, we use the original version for the catalogEntry
+		const nugetV2Version = packageInfo['m:properties']['d:Version']
 
 		this['@id'] = urlJoin(pageBase, nugetV2Version + '.json')
 		this.packageContent = packageInfo.content['@_src']
@@ -532,7 +541,7 @@ export class Leaf {
 			// We use an anchor because its an inlined entry
 			'@id': new URL(this['@id'] + '#catalogEntry'),
 			id: packageInfo.title.__value,
-			version: version,
+			version: nugetV2Version,
 		}
 
 		const dependencies = packageInfo['m:properties']['d:Dependencies']
@@ -543,7 +552,7 @@ export class Leaf {
 interface CatalogEntry {
 	'@id': URL
 	id: string
-	version: SemVer
+	version: string
 	dependencyGroups?: DependencyGroup[]
 	listed?: boolean
 	published?: string
