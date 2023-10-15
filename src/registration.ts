@@ -6,8 +6,6 @@ import { maxSatisfying, minSatisfying, parse as parseSemVer, SemVer } from 'semv
 import { throwIfNull } from './nullUtils.js'
 import urlJoinHelper from 'url-join'
 
-const testUrl = 'http://test'
-
 /** Helper function to combine URLs, because the builtin URL does not combine relative paths well with a base */
 
 type URLOrString = URL | string
@@ -323,8 +321,8 @@ function parseNugetV2DependencyString(pageBase: URL, nugetV2depInfo: string) {
 	})
 }
 
-/** Convert a nuget v2 version to a SemVer. This includes dotnet Assembly Version translation */
-function parseNugetV2Version(version: string) {
+/** Convert a nuget v2 version to a SemVer. This includes dotnet Assembly Version translation. Exported only for testing */
+export function parseNugetV2Version(version: string) {
 	const dotnetAssemblyVersionRegex = /^\d+\.\d+\.\d+\.\d+$/
 	if (dotnetAssemblyVersionRegex.test(version)) {
 		const [major, minor, build, revision] = version.split('.')
@@ -432,18 +430,29 @@ export class Index {
 		}
 
 		if (olderVersions) {
-			const lowestVersion = minSatisfying(
-				this.items.map(p => p.lower),
-				'*'
-			)
-			if (!lowestVersion) {
-				throw new Error('No lowest version found. This is a bug and should not happen')
-			}
+			const versionMap = new Map<SemVer, string>()
+
+			// Maps the semver we use for comparison to the "actual" version from the Nuget v2 API
+			const versions: SemVer[] = this.items.map(page => {
+				const nugetV2Version = page.lower
+				const semVer: SemVer =
+					parseNugetV2Version(nugetV2Version) ??
+					throwIfNull(`version ${nugetV2Version} could not be parsed. This should never happen.`)
+				versionMap.set(semVer, nugetV2Version)
+				return semVer
+			})
+
+			const lowestVersion: SemVer =
+				minSatisfying(versions, '*', { includePrerelease: true }) ??
+				throwIfNull('no lower bound found. This should never happen.')
+
 			// This doesnt actually exist yet, but will be fast-cached by a background task after the index is returned
 			const olderPageStub: Page = {
 				'@id': urlJoin(indexBase, 'page/older.json'),
 				lower: '0.0.0',
-				upper: lowestVersion,
+				upper:
+					versionMap.get(lowestVersion)?.toString() ??
+					throwIfNull('lower bound version not found in the map. This is a bug.'),
 				count: 0,
 			}
 			this.items.push(olderPageStub)
@@ -517,12 +526,14 @@ export class Page {
 			minSatisfying(versions, '*', { includePrerelease: true }) ??
 			throwIfNull('no lower bound found. This should never happen.')
 
-		this.lower = versionMap.get(lowerSemVer) ?? throwIfNull('lower bound version not found in the map. This is a bug.')
+		this.lower =
+			versionMap.get(lowerSemVer)?.toString() ?? throwIfNull('lower bound version not found in the map. This is a bug.')
 
 		const upperSemVer: SemVer =
 			maxSatisfying(versions, '*', { includePrerelease: true }) ??
 			throwIfNull('no lower bound found. This should never happen.')
-		this.upper = versionMap.get(upperSemVer) ?? throwIfNull('upper bound version not found in the map. This is a bug.')
+		this.upper =
+			versionMap.get(upperSemVer)?.toString() ?? throwIfNull('upper bound version not found in the map. This is a bug.')
 
 		// If no named page was specified, make an automatic one from the upper and lower bounds
 		const pageBaseName = 'page/' + pageName ?? this.lower + '/' + this.upper
@@ -550,7 +561,7 @@ export class Leaf {
 			// We use an anchor because its an inlined entry
 			'@id': new URL(this['@id'] + '#catalogEntry'),
 			id: packageInfo.title.__value,
-			version: nugetV2Version,
+			version: nugetV2Version.toString(),
 		}
 
 		const dependencies = packageInfo['m:properties']['d:Dependencies']
