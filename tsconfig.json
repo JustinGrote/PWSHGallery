@@ -1,7 +1,7 @@
 {
 	"compilerOptions": {
-		"target": "es2021",
-		"lib": ["es2021"],
+		"target": "es2022",
+		"lib": ["es2022"],
 		"module": "es2022",
 		"moduleResolution": "node",
 		"types": ["@cloudflare/workers-types"],
@@ -12,6 +12,8 @@
 		"isolatedModules": true,
 		"allowSyntheticDefaultImports": true,
 		"forceConsistentCasingInFileNames": true,
-		"strict": true
-	}
+		"strict": true,
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules", "dist", ".wrangler"]
 }

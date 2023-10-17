@@ -3,7 +3,9 @@ import { cache } from 'hono/cache'
 import { mainIndexHandler } from './mainIndex.js'
 import { registrationIndexHandler, registrationPageHandler, registrationPageLeafHandler } from './registration.js'
 
-const router = new Hono()
+type Environment = {}
+
+const router = new Hono<Environment>()
 
 router.use('*', cache({ cacheName: 'pwshgallery' }))
 router.get('/index.json', mainIndexHandler)

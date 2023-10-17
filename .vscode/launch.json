@@ -4,8 +4,10 @@
 			"name": "Wrangler Dev",
 			"type": "node",
 			"request": "attach",
-			"preLaunchTask": "Wrangler Dev"
-			// "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+			"port": 59229,
+			"timeout": 500, //Should attach immediately since we the port should be open via the prelaunch task
+			"preLaunchTask": "Wrangler Dev",
+			"skipFiles": ["<node_internals>/**", "**/node_modules/**"]
 		}
 	]
 }

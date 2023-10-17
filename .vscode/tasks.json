@@ -5,13 +5,11 @@
 			"label": "Wrangler Dev",
 			"detail": "Starts your Cloudflare Worker in local development mode.",
 			"type": "shell",
-			"command": "pnpm wrangler dev --port 80",
+			"command": "pnpm wrangler dev --inspector-port 59229",
 			"isBackground": true,
 			"problemMatcher": {
-				"owner": "wrangler",
-				"source": "wrangler",
 				"pattern": {
-					"regexp": "^(?<file>.+\\.rs):(?<line>\\d+):(?<col>\\d+):\\s+(?<message>.*)$",
+					"regexp": "^(T)(H)(I)(S)ISSTILLTODO$",
 					"file": 1,
 					"line": 2,
 					"column": 3,

@@ -1,10 +1,11 @@
 // Entrypoint for the Registration handler
 import { XMLParser } from 'fast-xml-parser'
-import { Context } from 'hono'
+import { type Context as HonoContext } from 'hono'
 import { StatusCodes } from 'http-status-codes'
 import { maxSatisfying, minSatisfying, parse as parseSemVer, SemVer } from 'semver'
 import { throwIfNull } from './nullUtils.js'
 import urlJoinHelper from 'url-join'
+import { type ExecutionContext as CloudflareExecutionContext } from '@cloudflare/workers-types'
 
 /** Helper function to combine URLs, because the builtin URL does not combine relative paths well with a base */
 
@@ -24,14 +25,14 @@ const xml = new XMLParser({
 	textNodeName: '__value',
 })
 
-export async function registrationIndexHandler(honoContext: Context) {
-	const { req: request, executionCtx: context } = honoContext
+export async function registrationIndexHandler(honoContext: HonoContext) {
+	const { req: request, executionCtx: cfContext } = honoContext
 
 	// This is used to build the '@id' URLs within the index
 	let baseUrl = new URL(request.url).origin
 
 	const { id } = request.param()
-	const index = await getRegistrationIndex(baseUrl, id, context)
+	const index = await getRegistrationIndex(baseUrl, id, cfContext)
 
 	// If we get a response instead of an index, its probably bad, and we need to return it to the user
 	if (index instanceof Response) {
@@ -43,7 +44,7 @@ export async function registrationIndexHandler(honoContext: Context) {
 	return response
 }
 
-export async function registrationPageHandler(honoContext: Context) {
+export async function registrationPageHandler(honoContext: HonoContext) {
 	const { req: request, executionCtx: context } = honoContext
 	return new Response(
 		'Not Implemented - This should return a cached page, need to add logic if it doesnt like if it is deeplinked',
@@ -73,13 +74,14 @@ export async function registrationPageHandler(honoContext: Context) {
 	// return response
 }
 
-export async function registrationPageLeafHandler(request: Request, _env: any, context: ExecutionContext) {
+export async function registrationPageLeafHandler(honoContext: HonoContext) {
+	const { req } = honoContext
 	/** We want to get our "base" URI for the registration Endpoint for purposes of building '@id' URIs */
-	const origin = new URL(request.url).origin
+	const origin = new URL(req.url).origin
 	// TODO: Type this, maybe with a generic?
-	const { id, lower, upper } = request.param()
+	const id = req.param('id')
 
-	const dependencyResponse = await getRegistrationIndex(v2OriginEndpoint, id, context)
+	const dependencyResponse = await getRegistrationIndex(v2OriginEndpoint, id, honoContext.env)
 
 	// A responseBody rather than what we want is probably an error and we will pass it thru.
 	if (dependencyResponse instanceof Response) {
@@ -91,7 +93,7 @@ export async function registrationPageLeafHandler(request: Request, _env: any, c
  * Handles queries for registrations by proxying calls to Powershell Gallery
  */
 // TODO: Redo this to abstract out the response part
-async function getRegistrationIndex(registrationBase: string, id: string, context: ExecutionContext) {
+async function getRegistrationIndex(registrationBase: string, id: string, context: CloudflareExecutionContext) {
 	console.debug(`Registration Index Query for ${id}`)
 
 	const dependencyResponse = await fetchOriginPackageInfo(v2OriginEndpoint, id)
@@ -137,7 +139,12 @@ async function getRegistrationIndex(registrationBase: string, id: string, contex
 /**
  * Retrieves the pages from the index fetched from PowerShell gallery
  */
-export async function getRegistrationPage(baseUri: string, id: string, context: ExecutionContext, page: string) {
+export async function getRegistrationPage(
+	baseUri: string,
+	id: string,
+	context: CloudflareExecutionContext,
+	page: string
+) {
 	const index = await getRegistrationIndex(baseUri, id, context)
 
 	// A responseBody rather than what we want is probably an error and we will pass it thru.
@@ -562,6 +569,7 @@ export class Leaf {
 			'@id': new URL(this['@id'] + '#catalogEntry'),
 			id: packageInfo.title.__value,
 			version: nugetV2Version.toString(),
+			tags: [], //HACK: This is only here for PSResourceGet 3.0 compatability
 		}
 
 		const dependencies = packageInfo['m:properties']['d:Dependencies']
@@ -577,6 +585,7 @@ interface CatalogEntry {
 	listed?: boolean
 	published?: string
 	registration?: string
+	tags: string[]
 	/**
 	 * Creates a new Leaf from a Nuget v2 Package Info. Useful for converting from the Nuget v2 API
 	 * @param registrationEndpoint #The base path of the registration endpoint, we use this for constructing IDs
