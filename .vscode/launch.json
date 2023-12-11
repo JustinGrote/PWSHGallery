@@ -4,9 +4,14 @@
 			"name": "Wrangler Dev",
 			"type": "node",
 			"request": "attach",
-			"port": 59229,
+			"port": 9229,
 			"timeout": 500, //Should attach immediately since we the port should be open via the prelaunch task
 			"preLaunchTask": "Wrangler Dev",
+			"cwd": "/",
+			"resolveSourceMapLocations": null,
+			"attachExistingChildren": false,
+			"autoAttachChildProcesses": false,
+			"sourceMaps": true,
 			"skipFiles": ["<node_internals>/**", "**/node_modules/**"]
 		}
 	]

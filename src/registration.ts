@@ -112,21 +112,21 @@ async function getRegistrationIndex(registrationBase: string, id: string, contex
 			registrationBase = new URL(registrationBase)
 			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
 			console.debug(`Found ${remainingPackages.length} remaining packages`)
-			const olderPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'older')
+			const recentPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'recent')
 
 			// Replace the page anchor with a direct link
-			olderPackagesPage.parent = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
-			olderPackagesPage['@id'] = new URL(
-				olderPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json')
+			recentPackagesPage.parent = new URL(recentPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
+			recentPackagesPage['@id'] = new URL(
+				recentPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json')
 			)
 
-			const pageUrl = olderPackagesPage['@id']
+			const pageUrl = recentPackagesPage['@id']
 			console.debug(`${id}: Caching page ${pageUrl}`)
 			// hono cache middleware should pick this up when it is requested
 			// TODO: Middleware might need to wait for this to show up in cache if we know index was called
-			const olderPackagesPageResponse = new Response(toJSON(olderPackagesPage))
-			olderPackagesPageResponse.headers.append('Cache-Control', 's-maxage=3600')
-			await cache.put(pageUrl, olderPackagesPageResponse)
+			const recentPackagesPageResponse = new Response(toJSON(recentPackagesPage))
+			recentPackagesPageResponse.headers.append('Cache-Control', 's-maxage=3600')
+			await cache.put(pageUrl, recentPackagesPageResponse)
 		}
 		// await fetchRemainingPackages(nextLink, id, index, registrationBase)
 		context.waitUntil(fetchRemainingPackages(nextLink, id, index, registrationBase))
@@ -400,7 +400,7 @@ export class Index {
 
 		const latest = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsLatestVersion']?.__value)
 		if (latest) {
-			// TODO: Handle case where the latest version is hidden. Right now it just goes into otherversions
+			// TODO: Handle case where the latest version is hidden. Right now it just goes into recent versions
 			this.items.push(new Page(indexBase, [latest], this['@id'], 'latest'))
 			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latest), 1)
 			if (removedItem[0] != latest) {
@@ -431,9 +431,9 @@ export class Index {
 		}
 
 		// TODO: Tabulate this in a server-definable setting so the individual pages are static and infinitely cacheable
-		// Construct a page consisting of all the other entries
+		// Construct a page consisting of all non-latest entries into a page called "other"
 		if (myv2Infos.length != 0) {
-			this.items.push(new Page(indexBase, myv2Infos, this['@id'], 'other'))
+			this.items.push(new Page(indexBase, myv2Infos, this['@id'], 'recent'))
 		}
 
 		if (olderVersions) {
