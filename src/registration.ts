@@ -44,34 +44,48 @@ export async function registrationIndexHandler(honoContext: HonoContext) {
 	return response
 }
 
+
 export async function registrationPageHandler(honoContext: HonoContext) {
 	const { req: request, executionCtx: context } = honoContext
-	return new Response(
-		'Not Implemented - This should return a cached page, need to add logic if it doesnt like if it is deeplinked',
-		{ status: StatusCodes.NOT_IMPLEMENTED }
-	)
 
-	// HACK: TrieRouter doesnt support period delimiters: https://github.com/honojs/hono/issues/737
-	const { id, 'page.json': pageNameRaw } = request.param()
+	// TODO: have a type for the various possible page names recent/index/other and early 404 if not found
+	const allowedPageNames = ['recent', 'older', 'latest', 'prerelease']
+	const id = request.param()['id']
+	const page = formatPageId(request.param()['page.json'])
+	if (!allowedPageNames.includes(page)) {
+		return new Response(`Page ${page} not found`, { status: StatusCodes.NOT_FOUND })
+	}
 
-	// This is used to build the '@id' URLs within the index
-	// let baseUrl = new URL(request.url).origin
+	console.debug(`Registration Page Query for ${id} ${page}`)
 
-	// const page = await getRegistrationPage(baseUrl, id, context, pageNameRaw)
+	// Re-await the registration handler to see if we can get a cached page
+	let baseUrl = new URL(request.url).origin
 
-	// // If we get a response instead of an index, its probably bad, and we need to return it to the user
-	// if (page instanceof Response) {
-	// 	return page
-	// }
+	const cache = await caches.open('pwshgallery')
 
-	// const responseBody = toJSON(page)
-	// const response = new Response(responseBody, {
-	// 	headers: {
-	// 		'content-type': 'application/json;charset=UTF-8',
-	// 		'cache-control': 'max-age: 86400',
-	// 	},
-	// })
-	// return response
+	// Check for a cache match every second for 5 seconds
+	let response: Response | undefined
+
+	// Trigger a fetch that should update the caches
+	await getRegistrationIndex(baseUrl, id, context)
+
+	const retries = 5
+	const retryDelay = 1000
+	for (let i = 0; i < retries; i++) {
+		console.log(`Checking for cache match ${request.url}`)
+		response = await cache.match(request.url)
+		if (response) {
+			break
+		}
+
+		// We only need to continue waiting if we are looking for the "older" page, as it may take longer to cache.
+		if (!response && page !== 'older') {
+			return newBadRequest(`Page ${page} cache not found. This is probably a bug.`)
+		}
+		await new Promise(resolve => setTimeout(resolve, retryDelay))
+	}
+
+	return response ?? new Response('Origin Cache Timeout. This might be a bug', { status: 504 })
 }
 
 export async function registrationPageLeafHandler(honoContext: HonoContext) {
@@ -112,23 +126,23 @@ async function getRegistrationIndex(registrationBase: string, id: string, contex
 			registrationBase = new URL(registrationBase)
 			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
 			console.debug(`Found ${remainingPackages.length} remaining packages`)
-			const recentPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'recent')
+			const olderPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'older')
 
 			// Replace the page anchor with a direct link
-			recentPackagesPage.parent = new URL(recentPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
-			recentPackagesPage['@id'] = new URL(
-				recentPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json')
+			olderPackagesPage.parent = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
+			olderPackagesPage['@id'] = new URL(
+				olderPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json')
 			)
 
-			const pageUrl = recentPackagesPage['@id']
-			console.debug(`${id}: Caching page ${pageUrl}`)
+			const pageUrl = olderPackagesPage['@id']
+			console.debug(`${id}: Caching older page ${pageUrl}`)
 			// hono cache middleware should pick this up when it is requested
 			// TODO: Middleware might need to wait for this to show up in cache if we know index was called
-			const recentPackagesPageResponse = new Response(toJSON(recentPackagesPage))
+			const recentPackagesPageResponse = new Response(toJSON(olderPackagesPage))
 			recentPackagesPageResponse.headers.append('Cache-Control', 's-maxage=3600')
 			await cache.put(pageUrl, recentPackagesPageResponse)
+			// await fetchRemainingPackages(nextLink, id, index, registrationBase)
 		}
-		// await fetchRemainingPackages(nextLink, id, index, registrationBase)
 		context.waitUntil(fetchRemainingPackages(nextLink, id, index, registrationBase))
 	}
 
@@ -611,4 +625,15 @@ function newBadRequest(message: string) {
 	return new Response(message, {
 		status: StatusCodes.BAD_REQUEST,
 	})
+}
+
+/**
+ * Formats the page ID by removing the '.json' extension if present.
+ * @see https://github.com/honojs/hono/issues/737
+ */
+function formatPageId(pageId: string) {
+	if (pageId.endsWith('.json')) {
+		return pageId.slice(0, -5)
+	}
+	return pageId
 }

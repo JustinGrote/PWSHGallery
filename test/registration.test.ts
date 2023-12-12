@@ -1,6 +1,6 @@
 import { type UnstableDevWorker, unstable_dev as wranglerDev } from 'wrangler'
 import { describe, expect, it, test, beforeAll, afterAll } from 'vitest'
-import { type Index } from '../src/registration.js'
+import { Page, type Index } from '../src/registration.js'
 import { rm } from 'fs/promises'
 
 let base: string
@@ -111,5 +111,25 @@ describe('router', () => {
 		// 		expect(result['@id']).toBe(url.toString())
 		// 	})
 		// })
+	})
+
+	describe('RegistrationPageHandler', () => {
+		it('Handles an unexpected deep-link to recent', async () => {
+			const response = await request('Az.Accounts/page/recent.json')
+			const actual = (await response.json()) as Page
+
+			expect(response.status).toBe(200)
+			expect(actual['@id']).toBe(new URL('Az.Accounts/page/recent.json', base).toString())
+			expect(actual.items?.length).toBeGreaterThan(0)
+		})
+
+		it('Handles an unexpected deep-link to older', async () => {
+			const response = await request('PnP.PowerShell/page/older.json')
+			const actual = (await response.json()) as Page
+
+			expect(response.status).toBe(200)
+			expect(actual['@id']).toBe(new URL('PnP.PowerShell/page/older.json', base).toString())
+			expect(actual.items?.length).toBeGreaterThan(0)
+		}, 10000)
 	})
 })
