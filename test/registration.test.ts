@@ -89,6 +89,13 @@ describe('router', () => {
 		it('has a older page as the final link', () => {
 			expect(result.items[2]['@id']).toBe(new URL('ImportExcel/page/older.json', base).toString())
 		})
+		it('lists the prerelease in the PrereleaseTest package', async () => {
+			response = await request('PrereleaseTest/index.json')
+			result = (await response.json()) as Index
+			expect(result.items[0]['@id']).toMatch(/prerelease/)
+			expect(result.items[1]['@id']).toMatch(/latest/)
+		})
+
 		// it.todo('index page is cached 🚩needs new way to test for wrangler v3', async () => {
 		// 	const key = new URL('ImportExcel/index.json', base)
 		// 	const cacheResult = await cache.match(key)

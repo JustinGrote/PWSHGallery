@@ -20,16 +20,7 @@ package queries is pretty effective
 Based on testing, fetching a single package info vs fetching all package infos is negligible, so we go ahead and fetch
 the first 100 results regardless even if we only present less to the user.
 
-## ModuleFast flow
-
-For origin queries, a "cold" hit will fetch all versions and dependencies of a package. Based on testing,
-
-Nuget v3 allows you to present "pages" of data, so we inline the "latest" version which is what 90% of queries will look for as a top page, and then
-present a "stub" page for all other versions. This enables the client to determine what packages meet the dependency criteria
-without having to perform queries for each version.
-
-We instruct the client to keep this in their local cache for 24 hours, but a client can request a "fresh" copy at any
-time with the no-cache header, this is useful in case someone is testing/publishing new modules frequently.
+PWSHGallery presents only the latest versions on the first query page, to minimize bandwidth, and in PowerShell the vast majority of queries are for this as version pinning is less common in PS since multiple versions of a module can be loaded. The remaining 98-ish results are cached to a "recent" page, and the remainder packages are fetched in the background and loaded to an "other" page. Since the majority of queries are for latest or recent, older can be a larger unoptimized fetch.
 
 ## Standard v3 Nuget Client Flow (todo)
 

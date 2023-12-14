@@ -31,7 +31,8 @@ export async function registrationIndexHandler(honoContext: HonoContext) {
 	// This is used to build the '@id' URLs within the index
 	let baseUrl = new URL(request.url).origin
 
-	const { id } = request.param()
+	const id = request.param('id')
+	console.log(`${id}: Outer Registration Index Handler Search`)
 	const index = await getRegistrationIndex(baseUrl, id, cfContext)
 
 	// If we get a response instead of an index, its probably bad, and we need to return it to the user
@@ -39,14 +40,24 @@ export async function registrationIndexHandler(honoContext: HonoContext) {
 		return index
 	}
 
-	const response = new Response(toJSON(index))
-	response.headers.append('Cache-Control', 'max-age=86400')
-	return response
-}
+	if (index['@id'].toString() !== request.url) {
+		console.error(
+			'Returned Index @id %s does not match request URL %s. This is a bug and should never happen.',
+			index['@id'],
+			request.url
+		)
+		return new Response(
+			`Returned Index @id ${index['@id']} does not match request URL ${request.url}. This is a bug and should never happen.`,
+			{ status: StatusCodes.FAILED_DEPENDENCY }
+		)
+	}
 
+	return Response.json(index)
+}
 
 export async function registrationPageHandler(honoContext: HonoContext) {
 	const { req: request, executionCtx: context } = honoContext
+	// NOTE: This should only ever be called on an uncached request. Cached requests should be handled via the hono middleware.
 
 	// TODO: have a type for the various possible page names recent/index/other and early 404 if not found
 	const allowedPageNames = ['recent', 'older', 'latest', 'prerelease']
@@ -58,34 +69,52 @@ export async function registrationPageHandler(honoContext: HonoContext) {
 
 	console.debug(`Registration Page Query for ${id} ${page}`)
 
-	// Re-await the registration handler to see if we can get a cached page
+	// Request the index which should populate the child page cache. It may already be cached
 	let baseUrl = new URL(request.url).origin
-
+	const indexUrl = baseUrl + '/' + id + '/index.json'
 	const cache = await caches.open('pwshgallery')
+
+	// See if the index is already cached, and make an origin request if not
+	let cachedIndex = await cache.match(indexUrl)
+	if (!cachedIndex) {
+		console.debug(`${id}: Cache miss for index ${indexUrl}`)
+		console.debug(`Registration Page Index Warmup Fetch: ${indexUrl}`)
+		const index = await getRegistrationIndex(baseUrl, id, context, true)
+		if (index instanceof Response) {
+			// There was a request issue of the index, so we will return that here
+			return new Response('Origin Index Error', { status: index.status })
+		}
+
+		cachedIndex = Response.json(index)
+
+		// Cache the index
+		const indexId = index['@id'].toString()
+		console.debug(`${id}: Caching index ${indexId}`)
+		cache.put(indexId, cachedIndex)
+	}
+	cachedIndex ?? throwIfNull('cachedIndex should not be null here. This is a bug.')
 
 	// Check for a cache match every second for 5 seconds
 	let response: Response | undefined
-
-	// Trigger a fetch that should update the caches
-	await getRegistrationIndex(baseUrl, id, context)
-
 	const retries = 5
 	const retryDelay = 1000
 	for (let i = 0; i < retries; i++) {
 		console.log(`Checking for cache match ${request.url}`)
 		response = await cache.match(request.url)
 		if (response) {
+			console.log(`${id}: Cache hit for ${request.url}`)
 			break
 		}
+		console.log(`${id}: Cache miss for ${request.url}. Retrying in ${retryDelay}ms`)
 
 		// We only need to continue waiting if we are looking for the "older" page, as it may take longer to cache.
-		if (!response && page !== 'older') {
-			return newBadRequest(`Page ${page} cache not found. This is probably a bug.`)
-		}
+		// if (!response && page !== 'older') {
+		// 	return newBadRequest(`Page ${page} cache not found. This is probably a bug.`)
+		// }
 		await new Promise(resolve => setTimeout(resolve, retryDelay))
 	}
 
-	return response ?? new Response('Origin Cache Timeout. This might be a bug', { status: 504 })
+	return response ?? new Response(`${id}: Origin Cache Timeout. This might be a bug`, { status: 504 })
 }
 
 export async function registrationPageLeafHandler(honoContext: HonoContext) {
@@ -107,17 +136,28 @@ export async function registrationPageLeafHandler(honoContext: HonoContext) {
  * Handles queries for registrations by proxying calls to Powershell Gallery
  */
 // TODO: Redo this to abstract out the response part
-async function getRegistrationIndex(registrationBase: string, id: string, context: CloudflareExecutionContext) {
-	console.debug(`Registration Index Query for ${id}`)
+async function getRegistrationIndex(
+	registrationBase: string,
+	id: string,
+	context: CloudflareExecutionContext,
+	noCompress = false
+) {
+	console.debug(`${id}: Inner Registration Index Query`)
 
-	const dependencyResponse = await fetchOriginPackageInfo(v2OriginEndpoint, id)
+	const packageInfoResponse = await fetchOriginPackageInfo(v2OriginEndpoint, id)
 	// A responseBody rather than what we want is probably an error and we will pass it thru.
-	if (dependencyResponse instanceof Response) {
-		return dependencyResponse
+	if (packageInfoResponse instanceof Response) {
+		return packageInfoResponse
 	}
 
-	const nextLink = dependencyResponse.nextLink
-	const index = new Index(registrationBase, id, dependencyResponse.packageInfos, nextLink !== undefined)
+	const nextLink = packageInfoResponse.nextLink
+
+	packageInfoResponse.packageInfos.forEach(
+		p =>
+			p.title.__value.toLowerCase() !== id.toLowerCase() &&
+			console.error(`Package ID ${id} does not match ${p.title.__value}`)
+	)
+	const index = new Index(registrationBase, id, packageInfoResponse.packageInfos, nextLink !== undefined)
 
 	// We want to process remaining packages in the background so as not to block the response.
 	if (nextLink) {
@@ -125,7 +165,7 @@ async function getRegistrationIndex(registrationBase: string, id: string, contex
 		const fetchRemainingPackages = async (nextLink: URL, id: string, index: Index, registrationBase: string | URL) => {
 			registrationBase = new URL(registrationBase)
 			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
-			console.debug(`Found ${remainingPackages.length} remaining packages`)
+			console.debug(`${id}: Found ${remainingPackages.length} remaining packages`)
 			const olderPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'older')
 
 			// Replace the page anchor with a direct link
@@ -138,43 +178,20 @@ async function getRegistrationIndex(registrationBase: string, id: string, contex
 			console.debug(`${id}: Caching older page ${pageUrl}`)
 			// hono cache middleware should pick this up when it is requested
 			// TODO: Middleware might need to wait for this to show up in cache if we know index was called
-			const recentPackagesPageResponse = new Response(toJSON(olderPackagesPage))
-			recentPackagesPageResponse.headers.append('Cache-Control', 's-maxage=3600')
-			await cache.put(pageUrl, recentPackagesPageResponse)
+			const olderPackagesPageResponse = Response.json(olderPackagesPage)
+			olderPackagesPageResponse.headers.append('Cache-Control', 's-maxage=3600')
+
+			await cache.put(pageUrl.toString(), olderPackagesPageResponse)
 			// await fetchRemainingPackages(nextLink, id, index, registrationBase)
 		}
-		context.waitUntil(fetchRemainingPackages(nextLink, id, index, registrationBase))
+		await fetchRemainingPackages(nextLink, id, index, registrationBase)
 	}
 
-	// We only want the stub so the client gets minimal/most common data and can query for more
-	return await index.compress()
-}
+	// We compress regardless of the request because this is how the prefetched pages get cached.
+	// TODO: Make this logic more explicit
+	const compressedIndex = index.compress()
 
-/**
- * Retrieves the pages from the index fetched from PowerShell gallery
- */
-export async function getRegistrationPage(
-	baseUri: string,
-	id: string,
-	context: CloudflareExecutionContext,
-	page: string
-) {
-	const index = await getRegistrationIndex(baseUri, id, context)
-
-	// A responseBody rather than what we want is probably an error and we will pass it thru.
-	if (index instanceof Response) {
-		return index
-	}
-
-	// TODO: Write a function that, if the page name is "older", wait until the cache is populated. This will avoid a race condition error.
-	const selectedPage = index.items.find(item => item['@id'].toString().split('/').at(-1) === page)
-	if (!selectedPage) {
-		return new Response(
-			'The registration page you requested does not exist. You probably either did not parse the @id from the index properly, or you guessed for this URI (shame on you). If you requested older, the main index may not have finished background caching yet and you should retry',
-			{ status: StatusCodes.NOT_FOUND }
-		)
-	}
-	return selectedPage
+	return noCompress ? index : compressedIndex
 }
 
 /** Generic serializer that takes into account issues with certain items */
@@ -208,7 +225,7 @@ async function fetchOriginPackageInfo(
 	cacheLifetimeSeconds: number = 3600
 ): Promise<OriginPackageInfoResponse | Response> {
 	// TODO: Proper Typing and building this request
-	console.debug(`Getting Packages for ${id} from ${v2Endpoint}`)
+	console.debug(`${id}: Origin Fetch Request from ${v2Endpoint}`)
 	const requestUri = new URL(
 		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,Version,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
 	)
@@ -217,7 +234,6 @@ async function fetchOriginPackageInfo(
 
 async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: number = 3600) {
 	// We make an eager fetch for all versions and their dependencies
-	console.debug(`ORIGIN REQUEST: ${url}`)
 	const originResponse = await fetch(url.toString(), {
 		headers: {
 			Accept: 'application/atom+xml',
@@ -225,44 +241,46 @@ async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: numbe
 		},
 		cf: {
 			cacheEverything: true,
+			cacheTtl: cacheLifetimeSeconds,
 			// Package specific queries are immutable so we should cache these basically forever
 			// TODO: Increase this to 1 month (Cloudflare Max) after stable
 			// TODO: Periodic background check and cache invalidate if needed
-			cacheTtl: cacheLifetimeSeconds,
 		},
 	})
+	console.debug(`ORIGIN REQUEST: ${url}`)
+	console.debug(`ORIGIN CACHE STATUS: ${originResponse.headers.get('CF-Cache-Status')}`)
+	console.debug(`ORIGIN RESPONSE URL: ${originResponse.url}`)
+	console.debug('Response Headers:')
+	originResponse.headers.forEach((v, k) => console.debug(`${k}: ${v}`))
 
 	if (!originResponse.ok) {
 		return originResponse
 	}
 
-	const responseText = await originResponse.text()
-
 	// TODO: Use the type hints in the XML attributes with JSON-LD
 	// TODO: Validate the info is what we expect, right now it just gets shaped to the interface without validation.
 	// This is reasonably safe since we know PSGallery, may cause issues with third party nuget quirks later
 	//FX
-	let responseXML = xml.parse(responseText)
+	const responseXML = xml.parse(await originResponse.text())
+	const nextLink = getNextLink(responseXML)
+
 	// Make sure responseXML.feed.entry is an array
-	let packageInfos: NugetV2PackageInfo[] = Array.isArray(responseXML.feed.entry)
+	const packageInfos: NugetV2PackageInfo[] = Array.isArray(responseXML.feed.entry)
 		? responseXML.feed.entry
 		: [responseXML.feed.entry]
 
 	// TODO: If a nextlink exists, we meed to bring this along with us and expose a separate cache page for those results
 	// Queries to the nextlink would be expected to be rare, for very old packages.
-	const nextLink = getNextLink(responseXML)
-
 	if (packageInfos[0] === undefined) {
 		return new Response(`No packages found`, {
 			status: StatusCodes.NOT_FOUND,
 		})
 	}
 
-	console.debug(`${url}: ${packageInfos.length} packages found`)
 	return {
 		packageInfos: packageInfos,
 		nextLink: nextLink,
-	}
+	} as OriginPackageInfoResponse
 }
 
 /** Get remaining package info from nextLink using an aggressive readahead process. This is typically used in the waitUntil so we can return newest results quickly and cache all results for follow-up from the user */
@@ -413,7 +431,9 @@ export class Index {
 		const myv2Infos = Array.from(v2Infos)
 
 		const latest = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsLatestVersion']?.__value)
+
 		if (latest) {
+			console.log(`${name} found latest version %s`, latest['m:properties']['d:Version'])
 			// TODO: Handle case where the latest version is hidden. Right now it just goes into recent versions
 			this.items.push(new Page(indexBase, [latest], this['@id'], 'latest'))
 			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latest), 1)
@@ -428,8 +448,10 @@ export class Index {
 		// NOTE: This must come after latest, because the same package may be both latest and absoluteLatest and we want that
 		// kind of package to be recognized as a latest and not a prerelease
 		const latestPrerelease = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsAbsoluteLatestVersion']?.__value)
-		if (latestPrerelease) {
-			this.items.push(new Page(indexBase, [latestPrerelease], this['@id'], 'prerelease'))
+		if (latestPrerelease && latest && latestPrerelease.id !== latest.id) {
+			console.log(`${name} found newer prerelease %s`, latestPrerelease['m:properties']['d:Version'])
+			// Put it at the top of the list
+			this.items.unshift(new Page(indexBase, [latestPrerelease], this['@id'], 'prerelease'))
 			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latestPrerelease), 1)
 			if (removedItem[0] != latestPrerelease) {
 				throw new Error(
@@ -484,28 +506,23 @@ export class Index {
 
 	// Takes pages that have more than 1 item, cache them, and replace them with a stub
 	async compress() {
-		var cache = await caches.open('pwshgallery')
-		for (const page of this.items) {
+		this.items = this.getCompressedPages()
+		return this
+	}
+
+	getCompressedPages() {
+		return this.items.map(page => {
 			if (page.items && page.items.length > 1) {
 				// Replace the page anchor with a direct link
 				page.parent = new URL(page['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
 				page['@id'] = new URL(page['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json'))
-				// Publish the full page with the direct link ID to the cache so future direct requests will pick it up
-				console.debug('Caching page %s', page['@id'].toString())
-				await cache.put(
-					page['@id'].toString(),
-					new Response(toJSON(page), {
-						headers: {
-							'Cache-Control': 'max-age=86400',
-						},
-					})
-				)
-				// Empty the items and parent to indicate it is a stub
 				page.parent = undefined
 				page.items = undefined
+				return page
+			} else {
+				return page
 			}
-		}
-		return this
+		})
 	}
 }
 

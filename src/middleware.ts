@@ -1,3 +1,4 @@
+import { MiddlewareHandler } from 'hono'
 import { StatusCodes } from 'http-status-codes'
 
 /** Verifies that the ModuleFast agent is making the request and drops the connection otherwise */

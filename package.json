@@ -27,8 +27,11 @@
 	"private": true,
 	"scripts": {
 		"start": "wrangler dev",
-		"debug": "wrangler dev",
+		"debug": "wrangler dev --log-level=info",
 		"deploy": "wrangler publish src/worker.ts",
+		"preview": "wrangler deploy -e preview",
+		"log": "wrangler tail -e preview",
+		"logp": "wrangler tail -e preview",
 		"test": "vitest"
 	}
 }
