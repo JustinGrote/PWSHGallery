@@ -137,6 +137,6 @@ describe('router', () => {
 			expect(response.status).toBe(200)
 			expect(actual['@id']).toBe(new URL('PnP.PowerShell/page/older.json', base).toString())
 			expect(actual.items?.length).toBeGreaterThan(0)
-		}, 10000)
+		}, 2000)
 	})
 })

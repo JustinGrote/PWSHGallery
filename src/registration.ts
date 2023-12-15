@@ -31,6 +31,13 @@ export async function registrationIndexHandler(honoContext: HonoContext) {
 	// This is used to build the '@id' URLs within the index
 	let baseUrl = new URL(request.url).origin
 
+	// FIXME: This should be done by the middleware handler
+	const cache = await caches.open('pwshgallery')
+	if (await cache.match(request.url)) {
+		console.debug(`✅ RETURNING CACHE HIT FOR INDEX: ${request.url}`)
+		return cache.match(request.url)
+	}
+
 	const id = request.param('id')
 	console.log(`${id}: Outer Registration Index Handler Search`)
 	const index = await getRegistrationIndex(baseUrl, id, cfContext)
@@ -52,6 +59,10 @@ export async function registrationIndexHandler(honoContext: HonoContext) {
 		)
 	}
 
+	// FIXME: This should be done by the middleware handler
+	const indexResponse = Response.json(index)
+	console.debug(`${id}: 📥 Caching Index: ${request.url}`)
+	cfContext.waitUntil(cache.put(request.url, indexResponse))
 	return Response.json(index)
 }
 
@@ -67,7 +78,15 @@ export async function registrationPageHandler(honoContext: HonoContext) {
 		return new Response(`Page ${page} not found`, { status: StatusCodes.NOT_FOUND })
 	}
 
-	console.debug(`Uncached Registration Page Query for ${id} ${page}. ===This is improper behavior===`)
+	// FIXME: This is temporary and should be handled by the higher order cache middleware in hono but there's a weird state bug right now
+	const cache = await caches.open('pwshgallery')
+	const cachedPage = await cache.match(request.url)
+	if (cachedPage) {
+		console.debug(`✅ RETURNING CACHE HIT FOR PAGE: ${id} ${page}`)
+		return cachedPage
+	}
+
+	console.debug(`⚠️ Uncached Registration Page Query for ${id} ${page}. ===This is improper behavior===`)
 
 	// Request the index which should populate the child page cache. It may already be cached
 	let baseUrl = new URL(request.url).origin
@@ -177,7 +196,7 @@ async function getRegistrationIndexInfo(
 	context: CloudflareExecutionContext,
 	noCompress = false
 ) {
-	console.debug(`${id}: Inner Registration Index Query`)
+	console.debug(`${id}: Uncached Registration Index Query`)
 
 	const packageInfoResponse = await fetchOriginPackageInfo(v2OriginEndpoint, id)
 	// A responseBody rather than what we want is probably an error and we will pass it thru.
@@ -194,12 +213,19 @@ async function getRegistrationIndexInfo(
 	)
 	const index = new Index(registrationBase, id, packageInfos, nextLink !== undefined)
 
-	// We want to process remaining packages in the background so as not to block the response.
 	if (nextLink) {
-		const otherPage = await fetchRemainingPackagesPage(nextLink, id, index, registrationBase)
+		// Fetch all older pages in the background and replace the stub in cache when they are ready
+		const olderPage = index.items.find(page => page['@id'].toString().endsWith('older.json'))
+		if (!olderPage) {
+			throw new Error('older.json not found. This is a bug.')
+		}
 		const cache = await caches.open('pwshgallery')
-		// TODO: Put into WaitUntil
-		cache.put(otherPage['@id'], Response.json(otherPage))
+
+		const cacheRemainingPackages = async () => {
+			const olderPage = await fetchRemainingPackagesPage(nextLink, id, index, registrationBase)
+			await cache.put(olderPage['@id'], Response.json(olderPage))
+		}
+		context.waitUntil(cacheRemainingPackages())
 	}
 
 	// We compress regardless of the request because this is how the prefetched pages get cached.
@@ -246,7 +272,6 @@ async function fetchOriginPackageInfo(
 	cacheLifetimeSeconds: number = 3600
 ): Promise<OriginPackageInfoResponse | Response> {
 	// TODO: Proper Typing and building this request
-	console.debug(`${id}: Origin Fetch Request from ${v2Endpoint}`)
 	const requestUri = new URL(
 		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,Version,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
 	)
@@ -260,6 +285,7 @@ async function fetchRemainingPackagesPage(nextLink: URL, id: string, index: Inde
 	const olderPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'older')
 
 	// Replace the page anchor with a direct link
+	// TODO: Replace with Stub()
 	olderPackagesPage.parent = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
 	olderPackagesPage['@id'] = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json'))
 
@@ -268,7 +294,7 @@ async function fetchRemainingPackagesPage(nextLink: URL, id: string, index: Inde
 
 async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: number = 3600) {
 	// We make an eager fetch for all versions and their dependencies
-	const originResponse = await fetch(url.toString(), {
+	const originResponse = await fetch(url, {
 		headers: {
 			Accept: 'application/atom+xml',
 			'Accept-Encoding': 'gzip',
@@ -281,6 +307,7 @@ async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: numbe
 			// TODO: Periodic background check and cache invalidate if needed
 		},
 	})
+
 	console.debug(`ORIGIN REQUEST: ${url}`)
 	console.debug(`ORIGIN CACHE STATUS: ${originResponse.headers.get('CF-Cache-Status')}`)
 
@@ -537,7 +564,14 @@ export class Index {
 
 	// Takes pages that have more than 1 item, cache them, and replace them with a stub
 	async compress() {
-		this.items = this.items.map(page => page.stub())
+		this.items = this.items.map(page => {
+			const cachedPage = structuredClone(page).stub(true)
+			// FIXME: Put this in a context where WaitUntil can be used.
+			console.log(`📥 Caching Page: ${cachedPage['@id']}`)
+			caches.open('pwshgallery').then(cache => cache.put(cachedPage['@id'].toString(), Response.json(cachedPage)))
+
+			return page.stub(false)
+		})
 		return this
 	}
 }
@@ -597,7 +631,7 @@ export class Page {
 		this['@id'] = urlJoin(parentIndexId, '#' + pageBaseName)
 	}
 
-	// Convert the page to a stub reference
+	// Convert the page to a stub reference, opportunistically caching the full page
 	public stub(keepItems = false) {
 		if (this.items && this.items.length > 1) {
 			// Replace the page anchor with a direct link and clear the contents
