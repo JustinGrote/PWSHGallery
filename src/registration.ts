@@ -67,54 +67,71 @@ export async function registrationPageHandler(honoContext: HonoContext) {
 		return new Response(`Page ${page} not found`, { status: StatusCodes.NOT_FOUND })
 	}
 
-	console.debug(`Registration Page Query for ${id} ${page}`)
+	console.debug(`Uncached Registration Page Query for ${id} ${page}. ===This is improper behavior===`)
 
 	// Request the index which should populate the child page cache. It may already be cached
 	let baseUrl = new URL(request.url).origin
 	const indexUrl = baseUrl + '/' + id + '/index.json'
-	const cache = await caches.open('pwshgallery')
 
-	// See if the index is already cached, and make an origin request if not
-	let cachedIndex = await cache.match(indexUrl)
-	if (!cachedIndex) {
-		console.debug(`${id}: Cache miss for index ${indexUrl}`)
-		console.debug(`Registration Page Index Warmup Fetch: ${indexUrl}`)
-		const index = await getRegistrationIndex(baseUrl, id, context, true)
-		if (index instanceof Response) {
-			// There was a request issue of the index, so we will return that here
-			return new Response('Origin Index Error', { status: index.status })
+	// Fetch the original uncompressed index. The fetch should be cached in getRegistrationIndex
+	console.debug(`Get Non-Stubbed Index Page: ${indexUrl}`)
+	const indexResponse = await getRegistrationIndexInfo(baseUrl, id, context, true)
+	console.debug(`Index Fetched: ${indexUrl}`)
+
+	if (indexResponse instanceof Response) {
+		// There was a request issue of the index, so we will return that here
+		return new Response('Origin Index Error', { status: indexResponse.status })
+	}
+	const { index, nextLink } = indexResponse
+
+	console.debug(`Non-Stubbed Index ID: ${index['@id']}`)
+
+	if (page === 'older') {
+		// We need to check the cache for the older page, because it may have been cached by the background task
+		const cache = await caches.open('pwshgallery')
+		const olderPageUrl = urlJoin(index['@id'], 'page/older.json')
+
+		// TODO: Move this to a function
+		const cacheTestKey = 'https://pwshGalleryCacheTest'
+		await cache.put(cacheTestKey, new Response('test'))
+		const cacheEnabled = !!(await cache.match(cacheTestKey))
+
+		if (!nextLink) {
+			return newBadRequest(
+				`Package ${id} has no older versions. You are probably here because you deeplinked when you shoudln't have. Naughty.`
+			)
 		}
 
-		cachedIndex = Response.json(index)
-
-		// Cache the index
-		const indexId = index['@id'].toString()
-		console.debug(`${id}: Caching index ${indexId}`)
-		cache.put(indexId, cachedIndex)
-	}
-	cachedIndex ?? throwIfNull('cachedIndex should not be null here. This is a bug.')
-
-	// Check for a cache match every second for 5 seconds
-	let response: Response | undefined
-	const retries = 5
-	const retryDelay = 1000
-	for (let i = 0; i < retries; i++) {
-		console.log(`Checking for cache match ${request.url}`)
-		response = await cache.match(request.url)
-		if (response) {
-			console.log(`${id}: Cache hit for ${request.url}`)
-			break
+		if (!cacheEnabled) {
+			console.log(`${id}: Detected Cache API non-functional, making direct request for ${olderPageUrl}`)
+			// FIXME: Should use actual registrationbase and not a guess
+			const remainingPackages = await fetchRemainingPackagesPage(nextLink, id, index, baseUrl)
+			return Response.json(remainingPackages)
+		} else {
+			// The registration index query above should cache the page eventually, so we need to wait until it is available.
+			console.log(`${id}: Cache API Detected, waiting for older page cache to populate`)
+			const retries = 5
+			const retryDelay = 1000
+			for (let i = 0; i < retries; i++) {
+				console.log(`Checking for cache match ${request.url}`)
+				const response = await cache.match(request.url)
+				if (response) {
+					console.log(`${id}: Cache hit for ${request.url}`)
+					return response
+				}
+				console.log(`${id}: Cache miss for ${request.url}. Retrying in ${retryDelay}ms`)
+				await new Promise(resolve => setTimeout(resolve, retryDelay))
+			}
+			return newBadRequest('Cache Timeout on older page fetch. This might be a bug')
 		}
-		console.log(`${id}: Cache miss for ${request.url}. Retrying in ${retryDelay}ms`)
-
-		// We only need to continue waiting if we are looking for the "older" page, as it may take longer to cache.
-		// if (!response && page !== 'older') {
-		// 	return newBadRequest(`Page ${page} cache not found. This is probably a bug.`)
-		// }
-		await new Promise(resolve => setTimeout(resolve, retryDelay))
 	}
 
-	return response ?? new Response(`${id}: Origin Cache Timeout. This might be a bug`, { status: 504 })
+	// If none of the special criteria above matter, do a normal page fetch
+	const pageContent = index.items.find(pageItem => pageItem['@id'].toString().endsWith(`#page/${page}`))
+
+	return !!pageContent
+		? Response.json(pageContent.stub(true))
+		: new Response(`Page ${page} not found. This is probably a bug.`, { status: StatusCodes.NOT_FOUND })
 }
 
 export async function registrationPageLeafHandler(honoContext: HonoContext) {
@@ -142,6 +159,24 @@ async function getRegistrationIndex(
 	context: CloudflareExecutionContext,
 	noCompress = false
 ) {
+	const result = await getRegistrationIndexInfo(registrationBase, id, context, noCompress)
+	if (result instanceof Response) {
+		return result
+	}
+
+	return result.index
+}
+
+interface RegistrationIndexResult {
+	index: Index
+	nextLink: URL | undefined
+}
+async function getRegistrationIndexInfo(
+	registrationBase: string,
+	id: string,
+	context: CloudflareExecutionContext,
+	noCompress = false
+) {
 	console.debug(`${id}: Inner Registration Index Query`)
 
 	const packageInfoResponse = await fetchOriginPackageInfo(v2OriginEndpoint, id)
@@ -150,51 +185,37 @@ async function getRegistrationIndex(
 		return packageInfoResponse
 	}
 
-	const nextLink = packageInfoResponse.nextLink
+	const { packageInfos, nextLink } = packageInfoResponse
 
-	packageInfoResponse.packageInfos.forEach(
+	packageInfos.forEach(
 		p =>
 			p.title.__value.toLowerCase() !== id.toLowerCase() &&
 			console.error(`Package ID ${id} does not match ${p.title.__value}`)
 	)
-	const index = new Index(registrationBase, id, packageInfoResponse.packageInfos, nextLink !== undefined)
+	const index = new Index(registrationBase, id, packageInfos, nextLink !== undefined)
 
 	// We want to process remaining packages in the background so as not to block the response.
 	if (nextLink) {
+		const otherPage = await fetchRemainingPackagesPage(nextLink, id, index, registrationBase)
 		const cache = await caches.open('pwshgallery')
-		const fetchRemainingPackages = async (nextLink: URL, id: string, index: Index, registrationBase: string | URL) => {
-			registrationBase = new URL(registrationBase)
-			const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
-			console.debug(`${id}: Found ${remainingPackages.length} remaining packages`)
-			const olderPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'older')
-
-			// Replace the page anchor with a direct link
-			olderPackagesPage.parent = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
-			olderPackagesPage['@id'] = new URL(
-				olderPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json')
-			)
-
-			const pageUrl = olderPackagesPage['@id']
-			console.debug(`${id}: Caching older page ${pageUrl}`)
-			// hono cache middleware should pick this up when it is requested
-			// TODO: Middleware might need to wait for this to show up in cache if we know index was called
-			const olderPackagesPageResponse = Response.json(olderPackagesPage)
-			olderPackagesPageResponse.headers.append('Cache-Control', 's-maxage=3600')
-
-			await cache.put(pageUrl.toString(), olderPackagesPageResponse)
-			// await fetchRemainingPackages(nextLink, id, index, registrationBase)
-		}
-		await fetchRemainingPackages(nextLink, id, index, registrationBase)
+		// TODO: Put into WaitUntil
+		cache.put(otherPage['@id'], Response.json(otherPage))
 	}
 
 	// We compress regardless of the request because this is how the prefetched pages get cached.
 	// TODO: Make this logic more explicit
-	const compressedIndex = index.compress()
+	if (!noCompress) {
+		index.compress()
+	}
 
-	return noCompress ? index : compressedIndex
+	return {
+		index: index,
+		nextLink: nextLink,
+	} as RegistrationIndexResult
 }
 
 /** Generic serializer that takes into account issues with certain items */
+// TODO: Make this a middleware
 function toJSON(object: any) {
 	// HACK: Monkey patch the SemVer class to return just the string when JSON serialized
 	// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify#tojson_behavior
@@ -232,6 +253,19 @@ async function fetchOriginPackageInfo(
 	return await fetchOriginPackageInfoByUrl(requestUri, cacheLifetimeSeconds)
 }
 
+async function fetchRemainingPackagesPage(nextLink: URL, id: string, index: Index, registrationBase: string | URL) {
+	registrationBase = new URL(registrationBase)
+	const remainingPackages = await fetchOriginRemainingPackageInfo(nextLink)
+	console.debug(`${id}: Found ${remainingPackages.length} remaining packages`)
+	const olderPackagesPage = new Page(urlJoin(registrationBase, id), remainingPackages, index['@id'], 'older')
+
+	// Replace the page anchor with a direct link
+	olderPackagesPage.parent = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
+	olderPackagesPage['@id'] = new URL(olderPackagesPage['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json'))
+
+	return olderPackagesPage
+}
+
 async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: number = 3600) {
 	// We make an eager fetch for all versions and their dependencies
 	const originResponse = await fetch(url.toString(), {
@@ -249,9 +283,6 @@ async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: numbe
 	})
 	console.debug(`ORIGIN REQUEST: ${url}`)
 	console.debug(`ORIGIN CACHE STATUS: ${originResponse.headers.get('CF-Cache-Status')}`)
-	console.debug(`ORIGIN RESPONSE URL: ${originResponse.url}`)
-	console.debug('Response Headers:')
-	originResponse.headers.forEach((v, k) => console.debug(`${k}: ${v}`))
 
 	if (!originResponse.ok) {
 		return originResponse
@@ -433,7 +464,7 @@ export class Index {
 		const latest = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsLatestVersion']?.__value)
 
 		if (latest) {
-			console.log(`${name} found latest version %s`, latest['m:properties']['d:Version'])
+			console.debug(`${name} found latest version %s`, latest['m:properties']['d:Version'])
 			// TODO: Handle case where the latest version is hidden. Right now it just goes into recent versions
 			this.items.push(new Page(indexBase, [latest], this['@id'], 'latest'))
 			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latest), 1)
@@ -497,7 +528,7 @@ export class Index {
 					versionMap.get(lowestVersion)?.toString() ??
 					throwIfNull('lower bound version not found in the map. This is a bug.'),
 				count: 0,
-			}
+			} as Page
 			this.items.push(olderPageStub)
 		}
 
@@ -506,23 +537,8 @@ export class Index {
 
 	// Takes pages that have more than 1 item, cache them, and replace them with a stub
 	async compress() {
-		this.items = this.getCompressedPages()
+		this.items = this.items.map(page => page.stub())
 		return this
-	}
-
-	getCompressedPages() {
-		return this.items.map(page => {
-			if (page.items && page.items.length > 1) {
-				// Replace the page anchor with a direct link
-				page.parent = new URL(page['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
-				page['@id'] = new URL(page['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json'))
-				page.parent = undefined
-				page.items = undefined
-				return page
-			} else {
-				return page
-			}
-		})
 	}
 }
 
@@ -579,6 +595,19 @@ export class Page {
 		// We want inlined links to be an anchor to the index rather than a separate link so clients dont try to follow it.
 		// this is better for caching.
 		this['@id'] = urlJoin(parentIndexId, '#' + pageBaseName)
+	}
+
+	// Convert the page to a stub reference
+	public stub(keepItems = false) {
+		if (this.items && this.items.length > 1) {
+			// Replace the page anchor with a direct link and clear the contents
+			this.parent = new URL(this['@id'].toString().replace(/index\.json#.+$/, 'index.json'))
+			this['@id'] = new URL(this['@id'].toString().replace(/index\.json#(page\/.+?)$/, '$1.json'))
+			if (!keepItems) {
+				this.items = undefined
+			}
+		}
+		return this
 	}
 }
 
