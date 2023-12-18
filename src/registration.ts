@@ -206,11 +206,10 @@ async function getRegistrationIndexInfo(
 
 	const { packageInfos, nextLink } = packageInfoResponse
 
-	packageInfos.forEach(
-		p =>
-			p.title.__value.toLowerCase() !== id.toLowerCase() &&
+	packageInfos.forEach(p => {
+		p.title.__value.toLowerCase() !== id.toLowerCase() &&
 			console.error(`Package ID ${id} does not match ${p.title.__value}`)
-	)
+	})
 	const index = new Index(registrationBase, id, packageInfos, nextLink !== undefined)
 
 	if (nextLink) {
@@ -273,7 +272,7 @@ async function fetchOriginPackageInfo(
 ): Promise<OriginPackageInfoResponse | Response> {
 	// TODO: Proper Typing and building this request
 	const requestUri = new URL(
-		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,Version,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion`
+		`${v2Endpoint}/FindPackagesById()?id='${id}'&semVerLevel=2.0.0&$orderby=IsLatestVersion desc,IsAbsoluteLatestVersion desc,Created desc&$select=GUID,Version,NormalizedVersion,Dependencies,IsLatestVersion,IsAbsoluteLatestVersion,ItemType`
 	)
 	return await fetchOriginPackageInfoByUrl(requestUri, cacheLifetimeSeconds)
 }
@@ -456,6 +455,7 @@ interface NugetV2PackageInfo {
 		'd:IsAbsoluteLatestVersion'?: {
 			__value: boolean
 		}
+		'd:ItemType'?: string
 	}
 }
 
@@ -663,7 +663,10 @@ export class Leaf {
 			'@id': new URL(this['@id'] + '#catalogEntry'),
 			id: packageInfo.title.__value,
 			version: nugetV2Version.toString(),
-			tags: [], //HACK: This is only here for PSResourceGet 3.0 compatability
+			tags: [],
+		}
+		if (packageInfo['m:properties']['d:ItemType'] === 'Script') {
+			this.catalogEntry.tags.push('Script')
 		}
 
 		const dependencies = packageInfo['m:properties']['d:Dependencies']
