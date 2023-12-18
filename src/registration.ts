@@ -23,6 +23,9 @@ const v2OriginEndpoint = 'http://www.powershellgallery.com/api/v2'
 const xml = new XMLParser({
 	ignoreAttributes: false,
 	textNodeName: '__value',
+	// Dont try to convert strings to numbers
+	parseAttributeValue: false,
+	parseTagValue: false,
 })
 
 export async function registrationIndexHandler(honoContext: HonoContext) {
@@ -325,6 +328,11 @@ async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: numbe
 	const packageInfos: NugetV2PackageInfo[] = Array.isArray(responseXML.feed.entry)
 		? responseXML.feed.entry
 		: [responseXML.feed.entry]
+
+	packageInfos.forEach(p => {
+		console.log('🐞 Version', p['m:properties']['d:Version'])
+		console.log('🐞 NormalizedVersion', p['m:properties']['d:NormalizedVersion'])
+	})
 
 	// TODO: If a nextlink exists, we meed to bring this along with us and expose a separate cache page for those results
 	// Queries to the nextlink would be expected to be rare, for very old packages.
@@ -656,7 +664,7 @@ export class Leaf {
 	constructor(pageBase: URL, packageInfo: NugetV2PackageInfo) {
 		// NOTE: While we use a normalized version for purposes of sorting, we use the original version for the catalogEntry
 		const nugetV2Version = packageInfo['m:properties']['d:Version']
-
+		console.log('🐞 PageBase Version: ', nugetV2Version)
 		this['@id'] = urlJoin(pageBase, nugetV2Version + '.json')
 		this.packageContent = packageInfo.content['@_src']
 
@@ -664,7 +672,7 @@ export class Leaf {
 			// We use an anchor because its an inlined entry
 			'@id': new URL(this['@id'] + '#catalogEntry'),
 			id: packageInfo.title.__value,
-			version: nugetV2Version.toString(),
+			version: nugetV2Version,
 			tags: [],
 		}
 		if (packageInfo['m:properties']['d:ItemType'] === 'Script') {
