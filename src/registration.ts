@@ -399,22 +399,24 @@ function getNextLink(xml: any): URL | undefined {
 
 function parseNugetV2DependencyString(pageBase: URL, nugetV2depInfo: string) {
 	const deps = nugetV2depInfo.split('|')
-	return deps.map<Dependency>(dep => {
-		const [id, v2Range] = dep.split(':')
+	return deps
+		.filter(dep => !dep.startsWith('::')) //Framework specifications currently not supported
+		.map<Dependency>(dep => {
+			const [id, v2Range] = dep.split(':')
 
-		// For PS and Nuget v2, a specified version actually means a minimum version, we need to fix that here
-		const range = v2Range.match(/^\d.+/) ? `[${v2Range}, )` : v2Range
+			// For PS and Nuget v2, a specified version actually means a minimum version, we need to fix that here
+			const range = v2Range.match(/^\d.+/) ? `[${v2Range}, )` : v2Range
 
-		// We can find the registration base by removing the package from the page base
-		const registrationBase = new URL(pageBase.toString().substring(0, pageBase.toString().lastIndexOf('/')))
+			// We can find the registration base by removing the package from the page base
+			const registrationBase = new URL(pageBase.toString().substring(0, pageBase.toString().lastIndexOf('/')))
 
-		const dependencyIndexId = urlJoin(registrationBase, id, 'index.json')
-		return {
-			id: id,
-			range: range,
-			registration: dependencyIndexId,
-		}
-	})
+			const dependencyIndexId = urlJoin(registrationBase, id, 'index.json')
+			return {
+				id: id,
+				range: range,
+				registration: dependencyIndexId,
+			}
+		})
 }
 
 /** Convert a nuget v2 version to a SemVer. This includes dotnet Assembly Version translation. Exported only for testing */
