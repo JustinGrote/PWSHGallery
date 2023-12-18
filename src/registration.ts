@@ -329,11 +329,6 @@ async function fetchOriginPackageInfoByUrl(url: URL, cacheLifetimeSeconds: numbe
 		? responseXML.feed.entry
 		: [responseXML.feed.entry]
 
-	packageInfos.forEach(p => {
-		console.log('🐞 Version', p['m:properties']['d:Version'])
-		console.log('🐞 NormalizedVersion', p['m:properties']['d:NormalizedVersion'])
-	})
-
 	// TODO: If a nextlink exists, we meed to bring this along with us and expose a separate cache page for those results
 	// Queries to the nextlink would be expected to be rare, for very old packages.
 	if (packageInfos[0] === undefined) {
@@ -434,6 +429,10 @@ export function parseNugetV2Version(version: string) {
 		const [major, minor, build, revision] = version.split('.')
 		return parseSemVer(`${major}.${minor}.${build}+${revision}`)
 	}
+
+	// Replace trailing zeroes with nothing (e.g. 1.000 -> 1.0 but 1.100 is unchanged)
+	const trailingZeroesRegex = /\.0+$/
+	version = version.replace(trailingZeroesRegex, '')
 
 	const majorOnly = /^\d+$/
 	const majorMinorOnly = /^\d+\.\d+$/
@@ -662,9 +661,8 @@ export class Leaf {
 	packageContent: string
 	// Creates a leaf and all related child items from a NugetV2 Package
 	constructor(pageBase: URL, packageInfo: NugetV2PackageInfo) {
-		// NOTE: While we use a normalized version for purposes of sorting, we use the original version for the catalogEntry
+		// NOTE: While we use a normalized version for purposes of sorting, we use the original version for the catalogEntry because that matters for determining the installation folder without needing to read the manifest.
 		const nugetV2Version = packageInfo['m:properties']['d:Version']
-		console.log('🐞 PageBase Version: ', nugetV2Version)
 		this['@id'] = urlJoin(pageBase, nugetV2Version + '.json')
 		this.packageContent = packageInfo.content['@_src']
 
