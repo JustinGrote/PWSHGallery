@@ -424,15 +424,20 @@ function parseNugetV2DependencyString(pageBase: URL, nugetV2depInfo: string) {
 
 /** Convert a nuget v2 version to a SemVer. This includes dotnet Assembly Version translation. Exported only for testing */
 export function parseNugetV2Version(version: string) {
+	// Normalize the version segments to remove leading/trailing zeroes
+	const versionComponents = version.split('-')
+	const prerelease = versionComponents[1]
+	const mainVersion = versionComponents[0]
+		.split('.')
+		.map(v => parseInt(v))
+		.join('.')
+	version = mainVersion + (prerelease ? '-' + prerelease : '')
+
 	const dotnetAssemblyVersionRegex = /^\d+\.\d+\.\d+\.\d+$/
 	if (dotnetAssemblyVersionRegex.test(version)) {
 		const [major, minor, build, revision] = version.split('.')
 		return parseSemVer(`${major}.${minor}.${build}+${revision}`)
 	}
-
-	// Replace trailing zeroes with nothing (e.g. 1.000 -> 1.0 but 1.100 is unchanged)
-	const trailingZeroesRegex = /\.0+$/
-	version = version.replace(trailingZeroesRegex, '')
 
 	const majorOnly = /^\d+$/
 	const majorMinorOnly = /^\d+\.\d+$/
@@ -674,7 +679,7 @@ export class Leaf {
 			tags: [],
 		}
 		if (packageInfo['m:properties']['d:ItemType'] === 'Script') {
-			this.catalogEntry.tags.push('Script')
+			this.catalogEntry.tags.push('ItemType:Script')
 		}
 
 		const dependencies = packageInfo['m:properties']['d:Dependencies']
