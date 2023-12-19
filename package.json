@@ -4,17 +4,17 @@
 	"version": "0.0.0",
 	"dependencies": {
 		"fast-xml-parser": "^4.3.2",
-		"hono": "^3.11.7",
+		"hono": "^3.11.8",
 		"http-status-codes": "^2.3.0",
 		"semver": "^7.5.4",
 		"url-join": "^5.0.0"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^4.20231121.0",
-		"@types/node": "^20.10.4",
+		"@cloudflare/workers-types": "^4.20231218.0",
+		"@types/node": "^20.10.5",
 		"@types/semver": "^7.5.6",
 		"@vitest/ui": "^0.34.7",
-		"eslint": "^8.55.0",
+		"eslint": "^8.56.0",
 		"eslint-config-prettier": "^9.1.0",
 		"miniflare": "^3.20231030.4",
 		"pnpm": "^8.12.1",
@@ -22,7 +22,7 @@
 		"prettier-plugin-organize-imports": "^3.2.4",
 		"typescript": "^5.3.3",
 		"vitest": "^0.34.6",
-		"wrangler": "^3.20.0"
+		"wrangler": "^3.21.0"
 	},
 	"private": true,
 	"scripts": {
