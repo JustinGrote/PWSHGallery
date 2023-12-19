@@ -62,11 +62,18 @@ export async function registrationIndexHandler(honoContext: HonoContext) {
 		)
 	}
 
-	// FIXME: This should be done by the middleware handler
+	const recentPage = index.items.find(p => p['@id'].toString().endsWith('#page/recent'))
+	if (recentPage) {
+		recentPage.stub()
+	}
+
 	const indexResponse = Response.json(index)
+
+	// FIXME: This should be done by the middleware handler
 	console.debug(`${id}: 📥 Caching Index: ${request.url}`)
-	cfContext.waitUntil(cache.put(request.url, indexResponse))
-	return Response.json(index)
+	cfContext.waitUntil(cache.put(request.url, indexResponse.clone()))
+
+	return indexResponse
 }
 
 export async function registrationPageHandler(honoContext: HonoContext) {
@@ -499,21 +506,28 @@ export class Index {
 		// Append index.json to indexBase preserving the full path of indexBase
 
 		this.items = []
-		// We are going to splice this and dont want to mess with the original array
+
+		// We are going to splice this and dont want to mess with the original array so we make a copy
 		const myv2Infos = Array.from(v2Infos)
+
+		if (myv2Infos.length === 0) {
+			throw new Error(
+				`No packages found for ${name}. This is a bug, we should not have got this far without at least one package.`
+			)
+		}
 
 		const latest = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsLatestVersion']?.__value)
 
-		if (latest) {
-			console.debug(`${name} found latest version %s`, latest['m:properties']['d:Version'])
-			// TODO: Handle case where the latest version is hidden. Right now it just goes into recent versions
-			this.items.push(new Page(indexBase, [latest], this['@id'], 'latest'))
-			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latest), 1)
-			if (removedItem[0] != latest) {
-				throw new Error(
-					`Removed latest item ${removedItem} does not match latest prerelease item ${latest}. This is a bug.`
-				)
-			}
+		if (!latest) {
+			throw new Error('No latest version found with IsLatestVersion property. This is a bug and should never happen.')
+		}
+
+		console.debug(`${name} found latest version %s`, latest['m:properties']['d:Version'])
+		// TODO: Handle case where the latest version is hidden. Right now it just goes into recent versions
+		this.items.push(new Page(indexBase, [latest], this['@id'], 'latest'))
+		const removedItem = myv2Infos.splice(myv2Infos.indexOf(latest), 1)
+		if (removedItem[0] != latest) {
+			throw new Error(`Removed latest item ${removedItem} does not match latest item ${latest}. This is a bug.`)
 		}
 
 		//TODO: Deduplicate latest and prerelease into a separate function
@@ -521,14 +535,24 @@ export class Index {
 		// kind of package to be recognized as a latest and not a prerelease
 		const latestPrerelease = myv2Infos.find(v2Info => v2Info['m:properties']['d:IsAbsoluteLatestVersion']?.__value)
 		if (latestPrerelease && latest && latestPrerelease.id !== latest.id) {
-			console.log(`${name} found newer prerelease %s`, latestPrerelease['m:properties']['d:Version'])
-			// Put it at the top of the list
-			this.items.unshift(new Page(indexBase, [latestPrerelease], this['@id'], 'prerelease'))
-			const removedItem = myv2Infos.splice(myv2Infos.indexOf(latestPrerelease), 1)
-			if (removedItem[0] != latestPrerelease) {
-				throw new Error(
-					`Removed prerelease item ${removedItem} does not match latest prerelease item ${latestPrerelease}. This is a bug.`
-				)
+			const preReleaseIsNewer =
+				parseNugetV2Version(latestPrerelease['m:properties']['d:Version'])! >
+				parseNugetV2Version(latest['m:properties']['d:Version'])!
+
+			if (preReleaseIsNewer) {
+				console.log(`${name} found newer prerelease %s`, latestPrerelease['m:properties']['d:Version'])
+				// Put it at the top of the list
+				const itemCount = this.items.unshift(new Page(indexBase, [latestPrerelease], this['@id'], 'prerelease'))
+				if (itemCount !== 2) {
+					throw 'There should only be the latest and prerelease in the array at this point. This is a bug otherwise.'
+				}
+
+				const removedItem = myv2Infos.splice(myv2Infos.indexOf(latestPrerelease), 1)
+				if (removedItem[0] != latestPrerelease) {
+					throw new Error(
+						`Removed prerelease item ${removedItem} does not match latest prerelease item ${latestPrerelease}. This is a bug.`
+					)
+				}
 			}
 		}
 
