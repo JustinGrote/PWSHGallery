@@ -83,7 +83,7 @@ export async function registrationPageHandler(honoContext: HonoContext) {
 	// TODO: have a type for the various possible page names recent/index/other and early 404 if not found
 	const allowedPageNames = ['recent', 'older', 'latest', 'prerelease']
 	const id = request.param()['id']
-	const page = formatPageId(request.param()['page.json'])
+	const page = formatPageId(request.param()['page'])
 	if (!allowedPageNames.includes(page)) {
 		return new Response(`Page ${page} not found`, { status: StatusCodes.NOT_FOUND })
 	}

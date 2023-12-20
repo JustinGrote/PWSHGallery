@@ -30,7 +30,7 @@ const router = new Hono<Environment>()
 // })
 router.get('/index.json', mainIndexHandler)
 router.get('/:id/index.json', registrationIndexHandler)
-router.get('/:id/page/:page.json', registrationPageHandler)
+router.get('/:id/page/:page{\\w+\\.json$}', registrationPageHandler)
 
 // router.get('/:id/:lower/:upper.json', registrationPageLeafHandler)
 
