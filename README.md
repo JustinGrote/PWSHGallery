@@ -1,3 +1,7 @@
+# DEPRECATED
+pwsh.gallery is now run via Sleet and a custom update script to an Azure Storage Account fronted by Cloudflare. This repository is still a functional implementation of a nuget v2->v3 proxy in Cloudflare Workers.
+
+
 # PowerShell Gallery Cloudflare Worker "mirror"
 
 This repo is an example of using CloudFlare workers to intelligently query and process a nuget v2 repository and present
